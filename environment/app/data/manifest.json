@@ -1,0 +1,771 @@
+{
+  "checkpoint_seq": 1500945,
+  "engine_version": "1.9",
+  "levels": {
+    "0": [
+      {
+        "bytes": 3746354,
+        "id": "seg-0058",
+        "level": 0,
+        "max_key": "cart:0013355",
+        "min_key": "acct:0005389",
+        "records": 4382,
+        "seq": 1351582
+      },
+      {
+        "bytes": 13217812,
+        "id": "seg-0059",
+        "level": 0,
+        "max_key": "profile:0000005",
+        "min_key": "acct:0012088",
+        "records": 7619,
+        "seq": 1359201
+      },
+      {
+        "bytes": 23495983,
+        "id": "seg-0060",
+        "level": 0,
+        "max_key": "tenant:0001974",
+        "min_key": "acct:0003979",
+        "records": 13076,
+        "seq": 1372277
+      },
+      {
+        "bytes": 16827189,
+        "id": "seg-0061",
+        "level": 0,
+        "max_key": "tenant:0009842",
+        "min_key": "docmeta:0021878",
+        "records": 9979,
+        "seq": 1382256
+      },
+      {
+        "bytes": 8930064,
+        "id": "seg-0062",
+        "level": 0,
+        "max_key": "profile:0000976",
+        "min_key": "acct:0013022",
+        "records": 6574,
+        "seq": 1388830
+      },
+      {
+        "bytes": 11685938,
+        "id": "seg-0063",
+        "level": 0,
+        "max_key": "tenant:0004893",
+        "min_key": "docmeta:0016978",
+        "records": 7222,
+        "seq": 1396052
+      },
+      {
+        "bytes": 2760961,
+        "id": "seg-0064",
+        "level": 0,
+        "max_key": "profile:0010989",
+        "min_key": "ledger:0003000",
+        "records": 4006,
+        "seq": 1400058
+      },
+      {
+        "bytes": 3732302,
+        "id": "seg-0065",
+        "level": 0,
+        "max_key": "ledger:0006552",
+        "min_key": "docmeta:0024558",
+        "records": 4517,
+        "seq": 1404575
+      },
+      {
+        "bytes": 3933519,
+        "id": "seg-0066",
+        "level": 0,
+        "max_key": "tenant:0005464",
+        "min_key": "profile:0023469",
+        "records": 4304,
+        "seq": 1408879
+      },
+      {
+        "bytes": 1780738,
+        "id": "seg-0067",
+        "level": 0,
+        "max_key": "docmeta:0023033",
+        "min_key": "docmeta:0007045",
+        "records": 3007,
+        "seq": 1411886
+      },
+      {
+        "bytes": 6341162,
+        "id": "seg-0068",
+        "level": 0,
+        "max_key": "invoice:0008716",
+        "min_key": "acct:0018725",
+        "records": 5747,
+        "seq": 1417633
+      },
+      {
+        "bytes": 1547821,
+        "id": "seg-0069",
+        "level": 0,
+        "max_key": "session:0015938",
+        "min_key": "profile:0025955",
+        "records": 2558,
+        "seq": 1420191
+      },
+      {
+        "bytes": 3747100,
+        "id": "seg-0070",
+        "level": 0,
+        "max_key": "invoice:0018191",
+        "min_key": "docmeta:0010213",
+        "records": 4440,
+        "seq": 1424631
+      },
+      {
+        "bytes": 6342093,
+        "id": "seg-0071",
+        "level": 0,
+        "max_key": "session:0023516",
+        "min_key": "ledger:0007532",
+        "records": 5320,
+        "seq": 1429951
+      },
+      {
+        "bytes": 9840884,
+        "id": "seg-0072",
+        "level": 0,
+        "max_key": "invoice:0012436",
+        "min_key": "acct:0022456",
+        "records": 7097,
+        "seq": 1437048
+      },
+      {
+        "bytes": 6741174,
+        "id": "seg-0073",
+        "level": 0,
+        "max_key": "ledger:0021204",
+        "min_key": "docmeta:0005221",
+        "records": 6647,
+        "seq": 1443695
+      },
+      {
+        "bytes": 11082694,
+        "id": "seg-0074",
+        "level": 0,
+        "max_key": "profile:0009556",
+        "min_key": "acct:0021576",
+        "records": 6732,
+        "seq": 1450427
+      },
+      {
+        "bytes": 10246540,
+        "id": "seg-0075",
+        "level": 0,
+        "max_key": "tenant:0008808",
+        "min_key": "docmeta:0020853",
+        "records": 6997,
+        "seq": 1457424
+      },
+      {
+        "bytes": 2860282,
+        "id": "seg-0076",
+        "level": 0,
+        "max_key": "tenant:0012162",
+        "min_key": "session:0004191",
+        "records": 3952,
+        "seq": 1461376
+      },
+      {
+        "bytes": 2377000,
+        "id": "seg-0077",
+        "level": 0,
+        "max_key": "profile:0018899",
+        "min_key": "ledger:0010916",
+        "records": 3288,
+        "seq": 1464664
+      },
+      {
+        "bytes": 18862126,
+        "id": "seg-0078",
+        "level": 0,
+        "max_key": "session:0024837",
+        "min_key": "acct:0000860",
+        "records": 9771,
+        "seq": 1474435
+      },
+      {
+        "bytes": 17350374,
+        "id": "seg-0079",
+        "level": 0,
+        "max_key": "tenant:0020481",
+        "min_key": "invoice:0006548",
+        "records": 9980,
+        "seq": 1484415
+      },
+      {
+        "bytes": 1840175,
+        "id": "seg-0080",
+        "level": 0,
+        "max_key": "invoice:0010295",
+        "min_key": "docmeta:0020305",
+        "records": 2951,
+        "seq": 1487366
+      },
+      {
+        "bytes": 16556084,
+        "id": "seg-0081",
+        "level": 0,
+        "max_key": "profile:0005302",
+        "min_key": "acct:0017310",
+        "records": 9401,
+        "seq": 1496767
+      },
+      {
+        "bytes": 1309759,
+        "id": "seg-0082",
+        "level": 0,
+        "max_key": "acct:0013035",
+        "min_key": "ACCT:0000642",
+        "records": 2849,
+        "seq": 1499616
+      },
+      {
+        "bytes": 507759,
+        "id": "seg-0083",
+        "level": 0,
+        "max_key": "acct:0006259",
+        "min_key": "acct:0000260",
+        "records": 1329,
+        "seq": 1500945
+      }
+    ],
+    "1": [
+      {
+        "bytes": 7415792,
+        "id": "seg-0012",
+        "level": 1,
+        "max_key": "tenant:0018420",
+        "min_key": "ledger:0006464",
+        "records": 5200,
+        "seq": 1113200
+      },
+      {
+        "bytes": 7472876,
+        "id": "seg-0013",
+        "level": 1,
+        "max_key": "ledger:0004847",
+        "min_key": "acct:0018853",
+        "records": 5200,
+        "seq": 1118400
+      },
+      {
+        "bytes": 7481501,
+        "id": "seg-0014",
+        "level": 1,
+        "max_key": "invoice:0008846",
+        "min_key": "ACCT:0000480",
+        "records": 5200,
+        "seq": 1123600
+      },
+      {
+        "bytes": 7446381,
+        "id": "seg-0015",
+        "level": 1,
+        "max_key": "ledger:0010722",
+        "min_key": "acct:0024778",
+        "records": 5200,
+        "seq": 1128800
+      },
+      {
+        "bytes": 7386751,
+        "id": "seg-0016",
+        "level": 1,
+        "max_key": "tenant:0001753",
+        "min_key": "invoice:0015785",
+        "records": 5200,
+        "seq": 1134000
+      },
+      {
+        "bytes": 7415889,
+        "id": "seg-0017",
+        "level": 1,
+        "max_key": "ledger:0004953",
+        "min_key": "acct:0018969",
+        "records": 5200,
+        "seq": 1139200
+      },
+      {
+        "bytes": 7328885,
+        "id": "seg-0018",
+        "level": 1,
+        "max_key": "profile:0007356",
+        "min_key": "cart:0021401",
+        "records": 5200,
+        "seq": 1144400
+      },
+      {
+        "bytes": 7266718,
+        "id": "seg-0019",
+        "level": 1,
+        "max_key": "ledger:0007846",
+        "min_key": "acct:0021859",
+        "records": 5200,
+        "seq": 1149600
+      },
+      {
+        "bytes": 7365453,
+        "id": "seg-0020",
+        "level": 1,
+        "max_key": "ledger:0014339",
+        "min_key": "cart:0002355",
+        "records": 5200,
+        "seq": 1154800
+      },
+      {
+        "bytes": 7353003,
+        "id": "seg-0021",
+        "level": 1,
+        "max_key": "tenant:0006769",
+        "min_key": "invoice:0020792",
+        "records": 5200,
+        "seq": 1160000
+      },
+      {
+        "bytes": 7411474,
+        "id": "seg-0022",
+        "level": 1,
+        "max_key": "tenant:0023576",
+        "min_key": "ledger:0011591",
+        "records": 5200,
+        "seq": 1165200
+      },
+      {
+        "bytes": 7342987,
+        "id": "seg-0023",
+        "level": 1,
+        "max_key": "session:0001617",
+        "min_key": "docmeta:0015673",
+        "records": 5200,
+        "seq": 1170400
+      },
+      {
+        "bytes": 7403518,
+        "id": "seg-0024",
+        "level": 1,
+        "max_key": "ledger:0022140",
+        "min_key": "cart:0010165",
+        "records": 5200,
+        "seq": 1175600
+      },
+      {
+        "bytes": 7427891,
+        "id": "seg-0025",
+        "level": 1,
+        "max_key": "tenant:0018237",
+        "min_key": "ledger:0006290",
+        "records": 5200,
+        "seq": 1180800
+      },
+      {
+        "bytes": 7434224,
+        "id": "seg-0026",
+        "level": 1,
+        "max_key": "tenant:0019979",
+        "min_key": "ledger:0007984",
+        "records": 5200,
+        "seq": 1186000
+      },
+      {
+        "bytes": 7412644,
+        "id": "seg-0027",
+        "level": 1,
+        "max_key": "profile:0006743",
+        "min_key": "cart:0020763",
+        "records": 5200,
+        "seq": 1191200
+      },
+      {
+        "bytes": 7438134,
+        "id": "seg-0028",
+        "level": 1,
+        "max_key": "invoice:0016349",
+        "min_key": "acct:0004385",
+        "records": 5200,
+        "seq": 1196400
+      },
+      {
+        "bytes": 7358328,
+        "id": "seg-0029",
+        "level": 1,
+        "max_key": "invoice:0011018",
+        "min_key": "DOCMETA:0000886",
+        "records": 5200,
+        "seq": 1201600
+      },
+      {
+        "bytes": 7406362,
+        "id": "seg-0030",
+        "level": 1,
+        "max_key": "session:0000289",
+        "min_key": "docmeta:0014317",
+        "records": 5200,
+        "seq": 1206800
+      },
+      {
+        "bytes": 7411718,
+        "id": "seg-0031",
+        "level": 1,
+        "max_key": "ledger:0009785",
+        "min_key": "acct:0023794",
+        "records": 5200,
+        "seq": 1212000
+      },
+      {
+        "bytes": 7403572,
+        "id": "seg-0032",
+        "level": 1,
+        "max_key": "ledger:0000263",
+        "min_key": "acct:0014294",
+        "records": 5200,
+        "seq": 1217200
+      },
+      {
+        "bytes": 7466721,
+        "id": "seg-0033",
+        "level": 1,
+        "max_key": "tenant:0016726",
+        "min_key": "ledger:0004730",
+        "records": 5200,
+        "seq": 1222400
+      },
+      {
+        "bytes": 7407157,
+        "id": "seg-0034",
+        "level": 1,
+        "max_key": "session:0015617",
+        "min_key": "invoice:0003629",
+        "records": 5200,
+        "seq": 1227600
+      },
+      {
+        "bytes": 7517009,
+        "id": "seg-0035",
+        "level": 1,
+        "max_key": "invoice:0010823",
+        "min_key": "DOCMETA:0000639",
+        "records": 5200,
+        "seq": 1232800
+      },
+      {
+        "bytes": 7292180,
+        "id": "seg-0036",
+        "level": 1,
+        "max_key": "session:0004488",
+        "min_key": "docmeta:0018508",
+        "records": 5200,
+        "seq": 1238000
+      },
+      {
+        "bytes": 7453879,
+        "id": "seg-0037",
+        "level": 1,
+        "max_key": "profile:0020660",
+        "min_key": "docmeta:0008678",
+        "records": 5200,
+        "seq": 1243200
+      },
+      {
+        "bytes": 7319652,
+        "id": "seg-0038",
+        "level": 1,
+        "max_key": "profile:0004741",
+        "min_key": "cart:0018795",
+        "records": 5200,
+        "seq": 1248400
+      },
+      {
+        "bytes": 7400430,
+        "id": "seg-0039",
+        "level": 1,
+        "max_key": "profile:0021805",
+        "min_key": "docmeta:0009833",
+        "records": 5200,
+        "seq": 1253600
+      },
+      {
+        "bytes": 7458024,
+        "id": "seg-0040",
+        "level": 1,
+        "max_key": "tenant:0010805",
+        "min_key": "invoice:0024814",
+        "records": 5200,
+        "seq": 1258800
+      },
+      {
+        "bytes": 7480011,
+        "id": "seg-0041",
+        "level": 1,
+        "max_key": "profile:0022274",
+        "min_key": "docmeta:0010344",
+        "records": 5200,
+        "seq": 1264000
+      },
+      {
+        "bytes": 7385564,
+        "id": "seg-0042",
+        "level": 1,
+        "max_key": "ledger:0023767",
+        "min_key": "cart:0011782",
+        "records": 5200,
+        "seq": 1269200
+      },
+      {
+        "bytes": 7411082,
+        "id": "seg-0043",
+        "level": 1,
+        "max_key": "tenant:0009463",
+        "min_key": "invoice:0023492",
+        "records": 5200,
+        "seq": 1274400
+      },
+      {
+        "bytes": 7334823,
+        "id": "seg-0044",
+        "level": 1,
+        "max_key": "ledger:0004658",
+        "min_key": "acct:0018688",
+        "records": 5200,
+        "seq": 1279600
+      },
+      {
+        "bytes": 7457302,
+        "id": "seg-0045",
+        "level": 1,
+        "max_key": "profile:0000651",
+        "min_key": "cart:0014743",
+        "records": 5200,
+        "seq": 1284800
+      },
+      {
+        "bytes": 7530441,
+        "id": "seg-0046",
+        "level": 1,
+        "max_key": "profile:0016843",
+        "min_key": "docmeta:0004869",
+        "records": 5200,
+        "seq": 1290000
+      },
+      {
+        "bytes": 7247246,
+        "id": "seg-0047",
+        "level": 1,
+        "max_key": "profile:0021057",
+        "min_key": "docmeta:0009091",
+        "records": 5200,
+        "seq": 1295200
+      },
+      {
+        "bytes": 7366985,
+        "id": "seg-0048",
+        "level": 1,
+        "max_key": "tenant:0022127",
+        "min_key": "ledger:0010134",
+        "records": 5200,
+        "seq": 1300400
+      },
+      {
+        "bytes": 7446598,
+        "id": "seg-0049",
+        "level": 1,
+        "max_key": "ledger:0012759",
+        "min_key": "cart:0000793",
+        "records": 5200,
+        "seq": 1305600
+      },
+      {
+        "bytes": 7405960,
+        "id": "seg-0050",
+        "level": 1,
+        "max_key": "invoice:0009241",
+        "min_key": "ACCT:0000873",
+        "records": 5200,
+        "seq": 1310800
+      },
+      {
+        "bytes": 7329493,
+        "id": "seg-0051",
+        "level": 1,
+        "max_key": "tenant:0010916",
+        "min_key": "invoice:0024954",
+        "records": 5200,
+        "seq": 1316000
+      },
+      {
+        "bytes": 7504789,
+        "id": "seg-0052",
+        "level": 1,
+        "max_key": "session:0014967",
+        "min_key": "invoice:0002978",
+        "records": 5200,
+        "seq": 1321200
+      },
+      {
+        "bytes": 7375699,
+        "id": "seg-0053",
+        "level": 1,
+        "max_key": "session:0004094",
+        "min_key": "docmeta:0018116",
+        "records": 5200,
+        "seq": 1326400
+      },
+      {
+        "bytes": 7438686,
+        "id": "seg-0054",
+        "level": 1,
+        "max_key": "profile:0011282",
+        "min_key": "cart:0025366",
+        "records": 5200,
+        "seq": 1331600
+      },
+      {
+        "bytes": 7394177,
+        "id": "seg-0055",
+        "level": 1,
+        "max_key": "ledger:0017516",
+        "min_key": "cart:0005529",
+        "records": 5200,
+        "seq": 1336800
+      },
+      {
+        "bytes": 7446904,
+        "id": "seg-0056",
+        "level": 1,
+        "max_key": "tenant:0003863",
+        "min_key": "invoice:0017868",
+        "records": 5200,
+        "seq": 1342000
+      },
+      {
+        "bytes": 7415807,
+        "id": "seg-0057",
+        "level": 1,
+        "max_key": "session:0007726",
+        "min_key": "docmeta:0021766",
+        "records": 5200,
+        "seq": 1347200
+      }
+    ],
+    "2": [
+      {
+        "bytes": 12693312,
+        "id": "seg-0000",
+        "level": 2,
+        "max_key": "tenant:0025993",
+        "min_key": "ACCT:0000007",
+        "records": 9000,
+        "seq": 1009000
+      },
+      {
+        "bytes": 12891069,
+        "id": "seg-0001",
+        "level": 2,
+        "max_key": "tenant:0025988",
+        "min_key": "ACCT:0000008",
+        "records": 9000,
+        "seq": 1018000
+      },
+      {
+        "bytes": 12864872,
+        "id": "seg-0002",
+        "level": 2,
+        "max_key": "tenant:0025989",
+        "min_key": "ACCT:0000007",
+        "records": 9000,
+        "seq": 1027000
+      },
+      {
+        "bytes": 12718598,
+        "id": "seg-0003",
+        "level": 2,
+        "max_key": "tenant:0025997",
+        "min_key": "ACCT:0000025",
+        "records": 9000,
+        "seq": 1036000
+      },
+      {
+        "bytes": 12807544,
+        "id": "seg-0004",
+        "level": 2,
+        "max_key": "tenant:0025994",
+        "min_key": "ACCT:0000008",
+        "records": 9000,
+        "seq": 1045000
+      },
+      {
+        "bytes": 12697526,
+        "id": "seg-0005",
+        "level": 2,
+        "max_key": "tenant:0025992",
+        "min_key": "ACCT:0000062",
+        "records": 9000,
+        "seq": 1054000
+      },
+      {
+        "bytes": 12768745,
+        "id": "seg-0006",
+        "level": 2,
+        "max_key": "tenant:0025998",
+        "min_key": "ACCT:0000014",
+        "records": 9000,
+        "seq": 1063000
+      },
+      {
+        "bytes": 12869086,
+        "id": "seg-0007",
+        "level": 2,
+        "max_key": "tenant:0025994",
+        "min_key": "ACCT:0000009",
+        "records": 9000,
+        "seq": 1072000
+      },
+      {
+        "bytes": 12896266,
+        "id": "seg-0008",
+        "level": 2,
+        "max_key": "tenant:0025982",
+        "min_key": "ACCT:0000002",
+        "records": 9000,
+        "seq": 1081000
+      },
+      {
+        "bytes": 12795803,
+        "id": "seg-0009",
+        "level": 2,
+        "max_key": "tenant:0025989",
+        "min_key": "ACCT:0000040",
+        "records": 9000,
+        "seq": 1090000
+      },
+      {
+        "bytes": 12783511,
+        "id": "seg-0010",
+        "level": 2,
+        "max_key": "tenant:0025999",
+        "min_key": "ACCT:0000000",
+        "records": 9000,
+        "seq": 1099000
+      },
+      {
+        "bytes": 12673574,
+        "id": "seg-0011",
+        "level": 2,
+        "max_key": "tenant:0025914",
+        "min_key": "ACCT:0000026",
+        "records": 9000,
+        "seq": 1108000
+      }
+    ]
+  },
+  "note": "written by the compactor before it was interrupted",
+  "shard_count": 96,
+  "unlinked_dir": "/app/data/pending"
+}

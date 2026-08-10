@@ -1,0 +1,93 @@
+artifacts = ["/app"]
+name = "segment-index-reconciliation"
+
+[metadata]
+author_name = "Jonathan"
+author_email = "jtolbert0175@gmail.com"
+difficulty_explanation = '''
+The node runs a long-term support release, and the eleven release notes shipped beside it describe
+both the behaviour that release has and the behaviour four later releases replaced it with. Taking
+the newest description of any rule is the natural reading and is wrong in five separate places at
+once: version precedence goes back to sequence-only, collation folds case, tombstones survive as
+rows, recovered segments land at the wrong level, and the shard split follows key counts instead of
+stored bytes. Nothing in the environment flags which paragraphs apply; only the version the manifest
+pins does, and one earlier rule inside the deployed range was itself withdrawn by a later one that
+is still within range, so neither "newest wins" nor "oldest wins" survives contact with the data.
+
+The work is a dependent chain rather than a single repair. A compaction was interrupted with nine
+segments written but never linked, one of them torn between its body and its trailer, so the first
+step is to decide admission, place and number what survives, merge every source under the deployed
+precedence, collation and tombstone rules, and rebuild both the compacted base and the repaired
+manifest at their expected paths. The shipped base holds only the cold level the compactor had
+finished and the shipped repaired manifest predates the unlinked segments entirely, so an engine
+repaired without that step reports a plausible index over a third of the tree.
+
+The level-0 compaction plan is the part that cannot be approximated. It is a subset selection under
+a mebibyte budget maximising eliminated range overlap, and the deployed release states in terms that
+the planner must return the attainable optimum; a density-ordered greedy pass, which is what the
+migration branch does and what the shape of the problem invites, lands several percent below it on
+this candidate set and fails outright on the tie-break order. A correct run finishes in about five
+seconds against the contract's 120-second budget, so the budget bounds the wrong approach rather
+than the right one. All figures are integers and the data is synthetic.
+'''
+solution_explanation = '''
+solution/solve.sh drives the two dependent steps inside the environment container. Step one runs
+solution/reconcile_segments.py, which implements the rules active in the pinned release: an unlinked
+segment is admitted only when its trailer is present and both its record count and its checksum
+match the body actually on disk, so the torn segment is discarded whole rather than truncated; what
+survives enters at level 0 numbered from the checkpoint by ascending segment id; keys that are
+empty, over sixty-four bytes or control-bearing are dropped at merge time; the surviving version of
+a key is the one from the lowest level, then the highest sequence within that level, then the
+greatest segment id; keys collate by raw UTF-8 bytes; and a winning tombstone suppresses its key
+outright while still counting toward the key's version depth. It writes
+/app/data/compacted_base.jsonl and /app/data/manifest_repaired.json, the latter carrying the level-0
+candidate set with the metadata the unlinked segments never had. Step two copies
+solution/rebuild_index_fixed.py over /app/workflow/rebuild_index.py and runs it: shard boundaries
+follow the running total of stored bytes, and the level-0 plan is solved exactly by a dynamic
+program whose objective packs the overlap score, the segment count, the charged size and a
+per-candidate bit into one integer, so the stated tie-breaks fall out of the optimisation instead of
+being applied afterwards. It writes exactly summary.json, shard_index.json and
+compaction_plan.jsonl into --output-dir.
+'''
+verification_explanation = '''
+The separate verifier (tests/Dockerfile builds an isolated image the agent cannot see) collects the
+agent's whole /app as the declared artifact and runs tests/test_outputs.py against it. Step one is
+graded directly: the rebuilt base and repaired manifest must match sealed digests, carry only the
+declared fields and leave every segment file byte-identical, and the shipped partial base plus four
+wrong reconciliations (the torn segment truncated rather than discarded, sequence-only precedence,
+case-folded collation, tombstones retained as rows) are each asserted different from it, with the
+agent's own engine re-run over each and required to disagree with the sealed outputs. That is what
+makes the two steps provably dependent. Step two executes the agent's /app/workflow/rebuild_index.py
+as a subprocess under an unprivileged uid (setpriv 65534, scrubbed environment, hard timeout) over
+both the rebuilt base and a held-out alternate base, and diffs the three artifacts against sealed
+fixtures. The plan is additionally checked against the optimum recomputed independently in the
+verifier and against the best density-ordered, value-ordered and size-ordered greedy selections,
+which must all score strictly below it, so a heuristic planner cannot pass by luck. Schema, sort,
+budget, contiguity and summary-arithmetic invariants are asserted separately, along with idempotency
+and the command-line defaults. The frozen snapshot /app/workflow/.rebuild_index.original is asserted
+present by hash and wrong by output. Confirmed locally in the real two-container flow: after
+solve.sh the verifier gives reward 1; a fresh environment gives 0, and so does an environment where
+the engine is repaired but the reconciliation is never run.
+'''
+category = "Software"
+subcategory = "Algorithms"
+tags = ["lsm-tree", "compaction", "knapsack", "crash-recovery", "version-pinning"]
+expert_time_estimate_hours = 4
+number_of_milestones = 0
+codebase_size = "small"
+difficulty = "advanced"
+languages = ["python"]
+
+[environment]
+build_timeout_sec = 900
+cpus = 2
+memory_mb = 8192
+storage_mb = 10240
+network_mode = "no-network"
+
+[agent]
+timeout_sec = 5400
+
+[verifier]
+timeout_sec = 1800
+environment_mode = "separate"
