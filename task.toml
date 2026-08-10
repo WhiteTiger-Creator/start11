@@ -69,6 +69,14 @@ present by hash and wrong by output. Confirmed locally in the real two-container
 solve.sh the verifier gives reward 1; a fresh environment gives 0, and so does an environment where
 the engine is repaired but the reconciliation is never run.
 '''
+relevant_experience = '''
+Experience operating a log-structured storage engine through a failed compaction: reconciling
+segments that reached disk but were never linked into the manifest, deciding admission from a
+trailer that disagrees with the body, and applying the level, sequence, collation and tombstone
+semantics of the release a node actually runs rather than the newest release documented beside it.
+Also the planning side -- scoring range overlap across a level and choosing a merge set that is
+provably the best available under a size budget rather than a greedy approximation.
+'''
 category = "Software"
 subcategory = "Algorithms"
 tags = ["lsm-tree", "compaction", "knapsack", "crash-recovery", "version-pinning"]

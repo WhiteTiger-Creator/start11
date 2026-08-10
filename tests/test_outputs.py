@@ -126,7 +126,10 @@ def _run_pipeline(script_path: Path = WORKFLOW_PATH, input_path: Path | None = N
         capture_output=True,
         text=True,
         check=False,
-        timeout=RUNTIME_BUDGET_SEC * 3,
+        # The contract's own budget, enforced rather than documented: a run
+        # that takes the obvious route does not come back inside it, and a
+        # timeout here is a failure exactly as the contract says.
+        timeout=RUNTIME_BUDGET_SEC,
     )
     assert completed.returncode == 0, (
         f"the rebuild exited {completed.returncode}\n"
@@ -614,7 +617,10 @@ def test_cli_defaults_match_an_explicit_run(primary_outputs):
         capture_output=True,
         text=True,
         check=False,
-        timeout=RUNTIME_BUDGET_SEC * 3,
+        # The contract's own budget, enforced rather than documented: a run
+        # that takes the obvious route does not come back inside it, and a
+        # timeout here is a failure exactly as the contract says.
+        timeout=RUNTIME_BUDGET_SEC,
     )
     assert completed.returncode == 0, completed.stderr[-2000:]
     assert _load_json(default_dir / "summary.json") == explicit_summary
