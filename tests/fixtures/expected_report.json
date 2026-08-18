@@ -48,6 +48,6 @@
       "shard_count": 96
     }
   },
-  "release_notes_digest": "c95cf7e91892c9f77c2e31387dfe820f92018bd91764d0ff90f67bf22843190b",
+  "release_notes_digest": "5336df69e730b6cdfd9fc634c375329501aa49416c342d5482c9e55fef6a76d3",
   "segment_tree_digest": "1c6425acebbcd6b3644b3e0fd015107bd3d33a2205003dc54bf1480f22367d5d"
 }
