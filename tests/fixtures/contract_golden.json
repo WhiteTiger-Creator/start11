@@ -1,0 +1,135 @@
+{
+  "contract_version": "segment-index-v1",
+  "description": "Output contract for the shard index rebuild. Shapes, paths, ordering and coercions only; it does not say how any value is derived.",
+  "runtime_budget_seconds": 120,
+  "outputs": {
+    "summary": {
+      "path": "/app/output/summary.json",
+      "container": "object",
+      "required_fields": [
+        "schema_version",
+        "engine_version",
+        "base_key_count",
+        "base_value_bytes",
+        "discarded_segment_count",
+        "level0_candidate_count",
+        "shard_count",
+        "max_shard_value_bytes",
+        "min_shard_value_bytes",
+        "max_shard_key_count",
+        "deepest_version_count",
+        "plan_segment_count",
+        "plan_eliminated_overlap",
+        "plan_charged_mib",
+        "plan_budget_mib"
+      ],
+      "field_types": {
+        "schema_version": "string",
+        "engine_version": "string",
+        "base_key_count": "integer",
+        "base_value_bytes": "integer",
+        "discarded_segment_count": "integer",
+        "level0_candidate_count": "integer",
+        "shard_count": "integer",
+        "max_shard_value_bytes": "integer",
+        "min_shard_value_bytes": "integer",
+        "max_shard_key_count": "integer",
+        "deepest_version_count": "integer",
+        "plan_segment_count": "integer",
+        "plan_eliminated_overlap": "integer",
+        "plan_charged_mib": "integer",
+        "plan_budget_mib": "integer"
+      },
+      "schema_version_value": "segment-index-v1"
+    },
+    "shard_index": {
+      "path": "/app/output/shard_index.json",
+      "container": "array",
+      "element_fields": [
+        "shard",
+        "first_key",
+        "last_key",
+        "key_count",
+        "value_bytes",
+        "max_version_count"
+      ],
+      "field_types": {
+        "shard": "integer",
+        "first_key": "string",
+        "last_key": "string",
+        "key_count": "integer",
+        "value_bytes": "integer",
+        "max_version_count": "integer"
+      },
+      "sort": "ascending by shard, which is numbered from zero and contiguous",
+      "serialisation": "JSON array, two-space indent, object keys sorted, trailing newline"
+    },
+    "compaction_plan": {
+      "path": "/app/output/compaction_plan.jsonl",
+      "container": "jsonl",
+      "element_fields": ["segment", "charged_mib"],
+      "field_types": {"segment": "string", "charged_mib": "integer"},
+      "sort": "ascending by segment id",
+      "serialisation": "one compact JSON object per line, object keys sorted, trailing newline"
+    }
+  },
+  "reconciled_inputs": {
+    "compacted_base": {
+      "path": "/app/data/compacted_base.jsonl",
+      "container": "jsonl",
+      "element_fields": [
+        "key",
+        "level",
+        "seq",
+        "segment",
+        "value_bytes",
+        "version_count"
+      ],
+      "field_types": {
+        "key": "string",
+        "level": "integer",
+        "seq": "integer",
+        "segment": "string",
+        "value_bytes": "integer",
+        "version_count": "integer"
+      },
+      "sort": "ascending by key under the collation the deployed release defines",
+      "serialisation": "one compact JSON object per line, object keys sorted, trailing newline"
+    },
+    "manifest_repaired": {
+      "path": "/app/data/manifest_repaired.json",
+      "container": "object",
+      "required_fields": [
+        "checkpoint_seq",
+        "discarded_segments",
+        "engine_version",
+        "levels",
+        "shard_count"
+      ],
+      "level_entry_fields": [
+        "id",
+        "level",
+        "seq",
+        "min_key",
+        "max_key",
+        "records",
+        "bytes"
+      ],
+      "sort": "each level list ascending by segment id; discarded_segments ascending",
+      "serialisation": "JSON object, two-space indent, object keys sorted, trailing newline"
+    }
+  },
+  "cli": {
+    "input": "--input selects the compacted base only; default /app/data/compacted_base.jsonl",
+    "output_dir": "--output-dir selects the output directory; default /app/output",
+    "fixed_paths": [
+      "/app/data/manifest_repaired.json",
+      "/app/data/index_policy.json"
+    ]
+  },
+  "numeric": {
+    "value_bytes": "integer bytes, never negative",
+    "charged_mib": "integer mebibytes",
+    "rounding": "each stated figure is rounded exactly once, in the direction the deployed release gives"
+  }
+}

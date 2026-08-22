@@ -28,7 +28,8 @@ the planner must return the attainable optimum; a density-ordered greedy pass, w
 migration branch does and what the shape of the problem invites, lands several percent below it on
 this candidate set and fails outright on the tie-break order. A correct run finishes in about five
 seconds against the contract's 120-second budget, so the budget bounds the wrong approach rather
-than the right one. All figures are integers and the data is synthetic.
+than the right one. All figures are integers and the data is synthetic. In real life this is the work of a storage-engine
+or database-infrastructure engineer recovering a node after an interrupted compaction.
 '''
 solution_explanation = '''
 solution/solve.sh drives the two dependent steps inside the environment container. Step one runs
@@ -64,7 +65,19 @@ fixtures. The plan is additionally checked against the optimum recomputed indepe
 verifier and against the best density-ordered, value-ordered and size-ordered greedy selections,
 which must all score strictly below it, so a heuristic planner cannot pass by luck. Schema, sort,
 budget, contiguity and summary-arithmetic invariants are asserted separately, along with idempotency
-and the command-line defaults. The frozen snapshot /app/workflow/.rebuild_index.original is asserted
+and the command-line defaults. The shard boundaries are recomputed in the verifier from the
+release's own rule -- shard k closes at the first key whose running total of stored bytes reaches
+k/shard_count of the whole -- and compared exactly, with a companion assertion that an equal-key
+split of the same base would land elsewhere, so that check separates a byte split from a key-count
+split without any tuned tolerance. No graded value is compared against a chosen constant: every one
+is an equality, a digest or a membership test, and the only inequalities in the suite are ones the
+task itself states -- the contract's 120-second budget, the policy's own merge budget, positivity of
+per-level counts and a floor asserting the graded base really is the large one. The reward channel
+is closed before any candidate code runs (/logs/verifier is created mode 700 and reward.txt mode
+600, both written by root), and every candidate run is started in its own session with its output
+captured to temporary files rather than pipes and its whole process group killed before any artifact
+is read, so a double-forked grandchild can neither hold the run open past the budget nor still be
+executing while its files are graded. The frozen snapshot /app/workflow/.rebuild_index.original is asserted
 present by hash and wrong by output. Confirmed locally in the real two-container flow: after
 solve.sh the verifier gives reward 1; a fresh environment gives 0, and so does an environment where
 the engine is repaired but the reconciliation is never run.

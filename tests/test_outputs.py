@@ -7,8 +7,11 @@ import hashlib
 import json
 import math
 import os
+import signal
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -18,6 +21,9 @@ DATA = APP / "data"
 WORKFLOW_PATH = APP / "workflow" / "rebuild_index.py"
 ORIGINAL_WORKFLOW_PATH = APP / "workflow" / ".rebuild_index.original"
 CONTRACT_PATH = APP / "docs" / "index_contract.json"
+# The contract is golden metadata: the verifier reads it from its own image,
+# never from the agent-writable copy under /app.
+GOLDEN_CONTRACT_PATH = Path("/tests/fixtures/contract_golden.json")
 MANIFEST_PATH = DATA / "manifest.json"
 POLICY_PATH = DATA / "index_policy.json"
 SEGMENT_DIR = DATA / "segments"
@@ -30,7 +36,7 @@ ALT_INPUT = Path("/tests/fixtures/alt_base.jsonl")
 SHIPPED_BASE_REFERENCE = Path("/tests/fixtures/shipped_base.json")
 
 FIXTURE = json.loads(EXPECTED_FIXTURE.read_text())
-CONTRACT = json.loads(CONTRACT_PATH.read_text())
+CONTRACT = json.loads(GOLDEN_CONTRACT_PATH.read_text())
 
 RUNTIME_BUDGET_SEC = 120.0
 MIB = 1048576
@@ -88,6 +94,62 @@ def _publish_inputs() -> None:
             pass
 
 
+def _reap_group(pgid: int) -> None:
+    """Kill and reap whatever the candidate left behind in its process group.
+
+    The id is captured before the run rather than after: once the direct child
+    has been waited on its process group can no longer be looked up, and a
+    grandchild it double-forked would survive the run and outlive grading.
+    """
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        return
+    for _ in range(50):
+        try:
+            os.killpg(pgid, 0)
+        except (ProcessLookupError, PermissionError, OSError):
+            return
+        time.sleep(0.02)
+
+
+def _run_candidate(command: list, cwd: Path) -> subprocess.CompletedProcess:
+    """Run the graded program in its own session and collect what it wrote.
+
+    Output goes to temporary files rather than pipes: a double-forked grandchild
+    inherits the write end of a pipe and can hold it open long after its parent
+    exits, which would stall the read instead of ending the run at the budget.
+    The whole process group is killed once the direct child is done, so nothing
+    the run spawned is still executing while its files are graded.
+    """
+    with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as out, \
+            tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as err:
+        proc = subprocess.Popen(
+            command,
+            cwd=str(cwd),
+            env=dict(CANDIDATE_ENV),
+            stdout=out,
+            stderr=err,
+            start_new_session=True,
+        )
+        # Session leader, so the group id equals the pid; read it before the wait.
+        pgid = proc.pid
+        try:
+            # The contract's own budget, enforced rather than documented: a run
+            # that takes the obvious route does not come back inside it, and a
+            # timeout here is a failure exactly as the contract says.
+            proc.wait(timeout=RUNTIME_BUDGET_SEC)
+        except subprocess.TimeoutExpired:
+            _reap_group(pgid)
+            proc.wait()
+            raise
+        finally:
+            _reap_group(pgid)
+        out.seek(0)
+        err.seek(0)
+        return subprocess.CompletedProcess(command, proc.returncode, out.read(), err.read())
+
+
 def _run_pipeline(script_path: Path = WORKFLOW_PATH, input_path: Path | None = None,
                   output_dir: Path | None = None):
     """Execute the agent's rebuild as an unprivileged subprocess.
@@ -119,18 +181,7 @@ def _run_pipeline(script_path: Path = WORKFLOW_PATH, input_path: Path | None = N
     if input_path is not None:
         command.extend(["--input", str(input_path)])
 
-    completed = subprocess.run(
-        command,
-        cwd=str(WORK_DIR),
-        env=CANDIDATE_ENV,
-        capture_output=True,
-        text=True,
-        check=False,
-        # The contract's own budget, enforced rather than documented: a run
-        # that takes the obvious route does not come back inside it, and a
-        # timeout here is a failure exactly as the contract says.
-        timeout=RUNTIME_BUDGET_SEC,
-    )
+    completed = _run_candidate(command, WORK_DIR)
     assert completed.returncode == 0, (
         f"the rebuild exited {completed.returncode}\n"
         f"stdout: {completed.stdout[-2000:]}\nstderr: {completed.stderr[-2000:]}"
@@ -474,16 +525,56 @@ def test_shards_are_contiguous_and_cover_the_base(primary_outputs):
 def test_shards_balance_stored_bytes_not_key_counts(primary_outputs):
     """The split follows stored bytes, which is not the key-count split.
 
-    Byte balance is tight and key balance is not; asserting both directions
-    keeps a key-count implementation from passing.
+    The boundaries are recomputed here straight from the release's rule -- shard
+    k closes at the first key whose running total of stored bytes reaches
+    k/shard_count of the whole -- and compared exactly, so the check carries no
+    tuned tolerance to justify. The closing assertion shows the two splits really
+    do differ on this base, which is what makes the comparison discriminating:
+    an equal-key split would land on different boundaries and fail above.
     """
     _, _, shards, _ = primary_outputs
-    byte_spread = max(r["value_bytes"] for r in shards) / min(
-        r["value_bytes"] for r in shards
+    rows = _load_jsonl(BASE_PATH)
+    shard_count = int(_load_json(POLICY_PATH)["shard_count"])
+    total = sum(int(row["value_bytes"]) for row in rows)
+
+    expected = []
+    running = 0
+    index = 0
+    start = 0
+    for shard in range(1, shard_count + 1):
+        target = math.ceil(shard * total / shard_count)
+        if shard == shard_count:
+            index = len(rows)
+        else:
+            while index < len(rows) and running < target:
+                running += int(rows[index]["value_bytes"])
+                index += 1
+        if index <= start:
+            continue
+        window = rows[start:index]
+        expected.append(
+            (
+                window[0]["key"],
+                window[-1]["key"],
+                len(window),
+                sum(int(row["value_bytes"]) for row in window),
+            )
+        )
+        start = index
+
+    observed = [
+        (r["first_key"], r["last_key"], r["key_count"], r["value_bytes"]) for r in shards
+    ]
+    assert observed == expected, "the shard boundaries do not follow the stored bytes"
+
+    equal_key_counts = [
+        len(rows) // shard_count + (1 if position < len(rows) % shard_count else 0)
+        for position in range(shard_count)
+    ]
+    assert [row[2] for row in expected] != equal_key_counts, (
+        "on this base a key-count split coincides with the byte split, so the "
+        "comparison above cannot tell the two apart"
     )
-    key_spread = max(r["key_count"] for r in shards) / min(r["key_count"] for r in shards)
-    assert byte_spread < 1.05, f"stored bytes are not balanced: {byte_spread}"
-    assert key_spread > 1.2, f"the split looks like a key-count split: {key_spread}"
 
 
 def test_summary_agrees_with_its_own_artifacts(primary_outputs):
@@ -602,7 +693,7 @@ def test_cli_defaults_match_an_explicit_run(primary_outputs):
         if stale.is_file():
             stale.unlink()
     os.chmod(default_dir, 0o1777)
-    completed = subprocess.run(
+    completed = _run_candidate(
         [
             "setpriv",
             f"--reuid={CANDIDATE_UID}",
@@ -612,15 +703,7 @@ def test_cli_defaults_match_an_explicit_run(primary_outputs):
             sys.executable,
             str(WORKFLOW_PATH),
         ],
-        cwd=str(WORK_DIR),
-        env=CANDIDATE_ENV,
-        capture_output=True,
-        text=True,
-        check=False,
-        # The contract's own budget, enforced rather than documented: a run
-        # that takes the obvious route does not come back inside it, and a
-        # timeout here is a failure exactly as the contract says.
-        timeout=RUNTIME_BUDGET_SEC,
+        WORK_DIR,
     )
     assert completed.returncode == 0, completed.stderr[-2000:]
     assert _load_json(default_dir / "summary.json") == explicit_summary
@@ -658,6 +741,50 @@ def test_run_finishes_inside_the_contract_budget(primary_outputs):
 # --------------------------------------------------------------------------
 # The frozen snapshot
 # --------------------------------------------------------------------------
+def test_submitted_program_runs_unprivileged_and_cannot_reach_the_reward():
+    """The graded program runs as nobody, and the reward channel is out of reach.
+
+    The probe reports its own uid, then whether reading and writing the reward
+    file both fail. /logs/verifier is root-only, so a graded run can neither
+    learn its score nor set it.
+    """
+    WORK_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(WORK_DIR, 0o1777)
+    # The probe lives in the shared work directory rather than a pytest tmp dir:
+    # those sit under a root-only parent that uid 65534 cannot traverse.
+    probe = WORK_DIR / "probe.py"
+    probe.write_text(
+        "import os\n"
+        "print(os.getuid())\n"
+        "try:\n"
+        "    open('/logs/verifier/reward.txt').read()\n"
+        "    print('readable')\n"
+        "except OSError:\n"
+        "    print('unreadable')\n"
+        "try:\n"
+        "    open('/logs/verifier/reward.txt', 'w').write('1')\n"
+        "    print('writable')\n"
+        "except OSError:\n"
+        "    print('unwritable')\n",
+        encoding="utf-8",
+    )
+    os.chmod(probe, 0o644)
+    result = _run_candidate(
+        [
+            "setpriv",
+            f"--reuid={CANDIDATE_UID}",
+            f"--regid={CANDIDATE_UID}",
+            "--clear-groups",
+            "--no-new-privs",
+            sys.executable,
+            str(probe),
+        ],
+        WORK_DIR,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert result.stdout.split() == [str(CANDIDATE_UID), "unreadable", "unwritable"]
+
+
 def test_original_snapshot_preserved():
     """The migration-branch engine must still be on disk, unmodified."""
     assert ORIGINAL_WORKFLOW_PATH.exists()
@@ -682,3 +809,14 @@ def test_release_notes_were_not_edited():
         for path in sorted((APP / "docs" / "release_notes").glob("*.md"))
     }
     assert _digest(live) == FIXTURE["release_notes_digest"]
+
+
+def test_shipped_contract_matches_the_golden_copy():
+    """The output contract in the environment is unmodified.
+
+    Field lists, container shapes and sort orders are golden metadata and are read
+    from the verifier's own image; this proves the agent's copy still agrees with
+    it, so the contract cannot be trimmed to weaken a schema check.
+    """
+    shipped = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+    assert shipped == json.loads(GOLDEN_CONTRACT_PATH.read_text(encoding="utf-8"))
