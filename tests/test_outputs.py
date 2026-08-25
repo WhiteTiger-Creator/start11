@@ -394,10 +394,11 @@ def _variant_bases() -> dict[str, list]:
     rows = _load_jsonl(BASE_PATH)
     variants: dict[str, list] = {}
 
-    # 2.2 collation: order the same rows case-insensitively.
-    variants["case_folded_order"] = sorted(
-        rows, key=lambda row: (row["key"].lower(), _byte_key(row["key"]))
-    )
+    # A collation variant belongs here in spirit, but a pure reordering of the
+    # same rows is recovered by any engine that defensively re-sorts its input --
+    # which the shipped engine does and a minimal repair may well keep -- so it
+    # would fail a correct solution. Byte collation is asserted directly on the
+    # recovered base instead, by test_reconciled_base_is_sorted_by_byte_collation.
     # 2.0 tombstones: keys the deployed release suppressed come back as rows.
     revived = [dict(row) for row in rows]
     for row in revived[::37]:
