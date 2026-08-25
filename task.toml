@@ -94,8 +94,6 @@ category = "Software"
 subcategory = "Algorithms"
 tags = ["lsm-tree", "compaction", "knapsack", "crash-recovery", "version-pinning"]
 expert_time_estimate_hours = 4
-number_of_milestones = 0
-codebase_size = "small"
 difficulty = "advanced"
 languages = ["python"]
 
@@ -104,11 +102,13 @@ build_timeout_sec = 900
 cpus = 2
 memory_mb = 8192
 storage_mb = 10240
-network_mode = "no-network"
+network_mode = "public"
 
 [agent]
+network_mode = "no-network"
 timeout_sec = 5400
 
 [verifier]
+network_mode = "no-network"
 timeout_sec = 1800
 environment_mode = "separate"
