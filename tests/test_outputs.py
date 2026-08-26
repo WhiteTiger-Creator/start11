@@ -87,10 +87,49 @@ def _publish_inputs() -> None:
     nothing to do with correctness.
     """
     for path in sorted(APP.rglob("*")):
+        # Never chmod through a link. This walks a tree the agent controls, so a
+        # link planted in it would otherwise have root widen its TARGET -- and a
+        # link pointing into /tests would reopen the sealed fixtures to the uid the
+        # graded program runs as. is_symlink() stats the link itself; os.chmod's
+        # follow_symlinks=False is unavailable on Linux, which has no lchmod, and
+        # raises NotImplementedError rather than doing nothing.
+        if path.is_symlink():
+            continue
         try:
             os.chmod(path, 0o755 if path.is_dir() else 0o644)
         except OSError:
             pass
+
+
+def test_publishing_inputs_does_not_chmod_through_a_planted_link():
+    """A link under /app cannot make root widen what it points at.
+
+    _publish_inputs runs as root over a tree the agent controls, so a link planted
+    there and aimed at /tests would otherwise open the sealed fixtures to the uid
+    the graded program runs as. Written as a live attempt, so it keeps holding if
+    the loop is rewritten.
+    """
+    target = EXPECTED_FIXTURE
+    target_dir = target.parent
+    before_file, before_dir = target.stat().st_mode, target_dir.stat().st_mode
+    planted_file = DATA / "planted-link.json"
+    planted_dir = DATA / "planted-dir-link"
+    for link in (planted_file, planted_dir):
+        if link.is_symlink() or link.exists():
+            link.unlink()
+    planted_file.symlink_to(target)
+    planted_dir.symlink_to(target_dir)
+    try:
+        _publish_inputs()
+        assert target.stat().st_mode == before_file, (
+            "root chmod followed a planted link and widened a sealed fixture")
+        assert target_dir.stat().st_mode == before_dir, (
+            "root chmod followed a planted link and widened the fixture directory")
+        assert planted_file.is_symlink() and planted_dir.is_symlink()
+    finally:
+        for link in (planted_file, planted_dir):
+            if link.is_symlink() or link.exists():
+                link.unlink()
 
 
 def _reap_group(pgid: int) -> None:
