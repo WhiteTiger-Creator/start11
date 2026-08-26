@@ -3,6 +3,7 @@
 The agent's program is never imported: it is executed as a subprocess under an
 unprivileged uid with a scrubbed environment, and only its files are read.
 """
+import ast
 import hashlib
 import json
 import os
@@ -713,6 +714,88 @@ def test_plan_covers_level_zero_only(primary_outputs):
 # --------------------------------------------------------------------------
 # Generalisation, idempotency, the command line
 # --------------------------------------------------------------------------
+def test_output_dir_holds_exactly_the_three_contracted_files():
+    """instruction.md says a run writes exactly three artifacts.
+
+    _run_pipeline reads those three by name, so a run that also dropped a scratch
+    file beside them satisfied every other check here. This resolves into a fresh
+    directory and then names everything in it.
+    """
+    _publish_inputs()
+    WORK_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(WORK_DIR, 0o1777)
+    target = WORK_DIR / "exact-out"
+    if target.exists():
+        for stale in sorted(target.rglob("*"), reverse=True):
+            if stale.is_file() or stale.is_symlink():
+                stale.unlink()
+            else:
+                stale.rmdir()
+    target.mkdir(parents=True, exist_ok=True)
+    os.chmod(target, 0o1777)
+    completed = _run_candidate(
+        ["setpriv", f"--reuid={CANDIDATE_UID}", f"--regid={CANDIDATE_UID}",
+         "--clear-groups", "--no-new-privs", sys.executable, str(WORKFLOW_PATH),
+         "--output-dir", str(target)],
+        WORK_DIR)
+    assert completed.returncode == 0, completed.stderr[-2000:]
+    names = sorted(q.name for q in target.iterdir())
+    assert names == ["compaction_plan.jsonl", "shard_index.json", "summary.json"], names
+
+
+def test_artifacts_use_the_serialisation_the_contract_states():
+    """Serialisation is contracted, and the digests cannot see it.
+
+    _digest decodes before hashing, so an artifact with the right content and the
+    wrong layout matches every sealed fixture. index_contract.json names two-space
+    indent with sorted keys and a trailing newline for the JSON artifacts and one
+    compact object per line for the plan, so those are read off the raw bytes.
+    """
+    target = WORK_DIR / "serialisation-out"
+    _run_pipeline(output_dir=target)
+    for name in ("summary.json", "shard_index.json"):
+        raw = (target / name).read_text(encoding="utf-8")
+        assert raw.endswith("\n"), f"{name} has no trailing newline"
+        assert raw == json.dumps(json.loads(raw), indent=2, sort_keys=True) + "\n", (
+            f"{name} is not two-space-indented JSON with sorted keys")
+
+    raw = (target / "compaction_plan.jsonl").read_text(encoding="utf-8")
+    assert raw.endswith("\n"), "compaction_plan.jsonl has no trailing newline"
+    lines = raw.splitlines()
+    assert lines and all(line.strip() for line in lines)
+    for number, line in enumerate(lines, start=1):
+        assert json.dumps(json.loads(line), separators=(",", ":"), sort_keys=True) == line, (
+            f"plan line {number} is not the compact, key-sorted serialisation of its content")
+
+
+def _imported_roots(source: str) -> set:
+    """Top-level module names the source imports, read from the parse tree."""
+    roots = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                roots.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            roots.add(node.module.split(".")[0])
+    return roots
+
+
+def test_rebuild_imports_only_the_standard_library():
+    """instruction.md says standard library only, and nothing was checking it.
+
+    Relying on the verifier image simply not carrying third-party packages is not
+    the same as enforcing the rule: it makes the constraint an accident of the
+    image rather than something the task states and grades. Modules the
+    submission ships beside the rebuild are its own code, not a dependency.
+    """
+    found = _imported_roots(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    local = {path.stem for path in WORKFLOW_PATH.parent.glob("*.py")}
+    local |= {path.name for path in WORKFLOW_PATH.parent.iterdir() if path.is_dir()}
+    outside = {name for name in found
+               if name not in sys.stdlib_module_names and name not in local}
+    assert not outside, f"the rebuild imports outside the standard library: {sorted(outside)}"
+
+
 def test_rebuild_is_idempotent():
     """Two runs over the same base produce the same three artifacts."""
     _, summary_a, shards_a, plan_a = _run_pipeline(output_dir=WORK_DIR / "idem_a")

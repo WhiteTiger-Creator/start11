@@ -25,6 +25,7 @@
         "charged_mib": "integer",
         "segment": "string"
       },
+      "key_set": "exactly these keys and no others",
       "path": "/app/output/compaction_plan.jsonl",
       "serialisation": "one compact JSON object per line, object keys sorted, trailing newline",
       "sort": "ascending by segment id"
@@ -47,6 +48,7 @@
         "shard": "integer",
         "value_bytes": "integer"
       },
+      "key_set": "exactly these keys and no others",
       "path": "/app/output/shard_index.json",
       "serialisation": "JSON array, two-space indent, object keys sorted, trailing newline",
       "sort": "ascending by shard, which is numbered from zero and contiguous"
@@ -111,6 +113,7 @@
         "value_bytes": "integer",
         "version_count": "integer"
       },
+      "key_set": "exactly these keys and no others",
       "path": "/app/data/compacted_base.jsonl",
       "serialisation": "one compact JSON object per line, object keys sorted, trailing newline",
       "sort": "ascending by key under the collation the deployed release defines"
