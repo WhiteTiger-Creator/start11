@@ -2,7 +2,6 @@
 """Rebuild the shard index and the level-0 compaction plan for a 1.9 engine."""
 import argparse
 import json
-import math
 from pathlib import Path
 
 DATA = Path("/app/data")
@@ -43,7 +42,7 @@ def shard_boundaries(rows: list[dict], shard_count: int) -> list[dict]:
     index = 0
     start = 0
     for shard in range(1, shard_count + 1):
-        target = math.ceil(shard * total / shard_count)
+        target = -(-(shard * total) // shard_count)
         if shard == shard_count:
             index = len(rows)
         else:
@@ -98,7 +97,7 @@ def compaction_plan(segments: list[dict], budget_mib: int) -> dict:
         (
             {
                 "id": s["id"],
-                "weight": max(1, math.ceil(int(s["bytes"]) / MIB)),
+                "weight": max(1, -(-int(s["bytes"]) // MIB)),
                 "value": scores[s["id"]],
             }
             for s in segments
@@ -176,15 +175,15 @@ def main() -> int:
                         "segment": seg_id,
                         "charged_mib": max(
                             1,
-                            math.ceil(
-                                int(
+                            -(
+                                -int(
                                     next(
                                         s["bytes"]
                                         for s in manifest["levels"]["0"]
                                         if s["id"] == seg_id
                                     )
                                 )
-                                / MIB
+                                // MIB
                             ),
                         ),
                     },

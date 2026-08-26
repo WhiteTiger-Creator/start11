@@ -5,7 +5,6 @@ unprivileged uid with a scrubbed environment, and only its files are read.
 """
 import hashlib
 import json
-import math
 import os
 import signal
 import subprocess
@@ -228,7 +227,7 @@ def _plan_items(segments: list[dict]) -> list[dict]:
         (
             {
                 "id": s["id"],
-                "weight": max(1, math.ceil(int(s["bytes"]) / MIB)),
+                "weight": max(1, -(-int(s["bytes"]) // MIB)),
                 "value": scores[s["id"]],
             }
             for s in segments
@@ -368,6 +367,21 @@ def test_source_segments_are_left_untouched():
         }
     )
     assert _digest(live) == FIXTURE["segment_tree_digest"]
+
+
+def test_repaired_manifest_carries_exactly_the_contracted_keys():
+    """The repaired manifest's top-level key set is the contracted one, exactly.
+
+    The sealed-digest check would also catch an extra key, but only as an opaque
+    mismatch. index_contract.json states this key set is exhaustive, so a manifest
+    that carried the shipped note and unlinked_dir forward fails here saying which
+    keys were wrong.
+    """
+    repaired = _load_json(REPAIRED_PATH)
+    wanted = set(CONTRACT["reconciled_inputs"]["manifest_repaired"]["required_fields"])
+    extra, missing = set(repaired) - wanted, wanted - set(repaired)
+    assert not extra, f"repaired manifest carries keys the contract does not: {sorted(extra)}"
+    assert not missing, f"repaired manifest is missing contracted keys: {sorted(missing)}"
 
 
 def test_shipped_base_was_actually_incomplete():
@@ -543,7 +557,7 @@ def test_shards_balance_stored_bytes_not_key_counts(primary_outputs):
     index = 0
     start = 0
     for shard in range(1, shard_count + 1):
-        target = math.ceil(shard * total / shard_count)
+        target = -(-(shard * total) // shard_count)
         if shard == shard_count:
             index = len(rows)
         else:
@@ -607,7 +621,7 @@ def test_plan_is_within_budget_and_charged_upward(primary_outputs):
     entries = {e["id"]: e for e in _load_json(REPAIRED_PATH)["levels"]["0"]}
     for row in plan:
         assert row["segment"] in entries, f"{row['segment']} is not a level-0 candidate"
-        expected = max(1, math.ceil(int(entries[row["segment"]]["bytes"]) / MIB))
+        expected = max(1, -(-int(entries[row["segment"]]["bytes"]) // MIB))
         assert row["charged_mib"] == expected, row["segment"]
     budget = _load_json(POLICY_PATH)["merge_budget_mib"]
     assert sum(row["charged_mib"] for row in plan) <= budget
