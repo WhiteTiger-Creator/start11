@@ -40,6 +40,7 @@ CONTRACT = json.loads(GOLDEN_CONTRACT_PATH.read_text())
 
 RUNTIME_BUDGET_SEC = 120.0
 MIB = 1048576
+RECORD_UNIT = 1000  # v1.9 charges records in whole thousands
 WORK_DIR = Path("/candidate-work")
 CANDIDATE_UID = 65534
 CANDIDATE_ENV = {
@@ -261,13 +262,14 @@ def _overlap_scores(segments: list[dict]) -> dict[str, int]:
 
 
 def _plan_items(segments: list[dict]) -> list[dict]:
-    """Charged size and overlap score per candidate, in id order."""
+    """Charged size, charged records and overlap score per candidate, in id order."""
     scores = _overlap_scores(segments)
     return sorted(
         (
             {
                 "id": s["id"],
                 "weight": max(1, -(-int(s["bytes"]) // MIB)),
+                "records": max(1, -(-int(s["records"]) // RECORD_UNIT)),
                 "value": scores[s["id"]],
             }
             for s in segments
@@ -276,38 +278,62 @@ def _plan_items(segments: list[dict]) -> list[dict]:
     )
 
 
-def _optimal_plan(items: list[dict], budget: int) -> tuple[int, list[str]]:
+def _optimal_plan(items: list[dict], budget: int, record_budget: int) -> tuple[int, list[str]]:
     """Best attainable score and the plan that the tie-breaks single out.
 
-    A forward search over reachable loads carrying the full ordering key, which
-    is a different formulation from the reference's backward table; the two
-    agreeing is a real cross-check rather than the same code twice.
+    A backward table over both budgets, with the whole ordering key packed into
+    one integer so a state costs a machine word rather than a list of ids: score
+    dominates, then fewer segments, then smaller charged size, then smaller
+    charged records, then a per-candidate bit worth more the earlier its id
+    sorts, which is exactly "lexicographically smallest list". The reference
+    searches forward over reachable loads instead, so the two agreeing is a real
+    cross-check rather than the same code run twice.
     """
-    # state: charged load -> (value, -count, -load, chosen ids)
-    reachable = {0: (0, 0, 0, [])}
-    for item in items:
-        nxt = dict(reachable)
-        for load, (value, negc, negl, ids) in reachable.items():
-            new_load = load + item["weight"]
-            if new_load > budget:
-                continue
-            candidate = (value + item["value"], negc - 1, -new_load, [*ids, item["id"]])
-            held = nxt.get(new_load)
-            if held is None or candidate[:3] > held[:3] or (
-                candidate[:3] == held[:3] and candidate[3] < held[3]
-            ):
-                nxt[new_load] = candidate
-        reachable = nxt
-    best = max(reachable.values(), key=lambda state: (state[0], state[1], state[2]))
-    tied = [
-        state
-        for state in reachable.values()
-        if (state[0], state[1], state[2]) == (best[0], best[1], best[2])
+    cap = record_budget // RECORD_UNIT
+    count = len(items)
+    id_bits = 1 << count
+    recs_unit = id_bits
+    mib_unit = recs_unit * (sum(i["records"] for i in items) + 1)
+    count_unit = mib_unit * (sum(i["weight"] for i in items) + 1)
+    value_unit = count_unit * (count + 1)
+    gains = [
+        item["value"] * value_unit
+        - count_unit
+        - item["weight"] * mib_unit
+        - item["records"] * recs_unit
+        + (1 << (count - 1 - index))
+        for index, item in enumerate(items)
     ]
-    return best[0], sorted(min(tied, key=lambda state: state[3])[3])
+
+    width = cap + 1
+    table = [[0] * ((budget + 1) * width) for _ in range(count + 1)]
+    for index in range(count - 1, -1, -1):
+        item, here, nxt, gain = items[index], table[index], table[index + 1], gains[index]
+        weight, records = item["weight"], item["records"]
+        for mib in range(budget + 1):
+            row = mib * width
+            for recs in range(cap + 1):
+                skip = nxt[row + recs]
+                if weight <= mib and records <= recs:
+                    take = nxt[(mib - weight) * width + (recs - records)] + gain
+                    here[row + recs] = take if take > skip else skip
+                else:
+                    here[row + recs] = skip
+
+    chosen: list[str] = []
+    mib, recs = budget, cap
+    for index, item in enumerate(items):
+        if item["weight"] <= mib and item["records"] <= recs:
+            here = table[index][mib * width + recs]
+            if here != table[index + 1][mib * width + recs]:
+                chosen.append(item["id"])
+                mib -= item["weight"]
+                recs -= item["records"]
+    score = sum(item["value"] for item in items if item["id"] in set(chosen))
+    return score, sorted(chosen)
 
 
-def _greedy_scores(items: list[dict], budget: int) -> dict[str, int]:
+def _greedy_scores(items: list[dict], budget: int, record_budget: int) -> dict[str, int]:
     """What the plausible heuristics achieve on the same candidate set."""
     orders = {
         "density": lambda item: (-item["value"] / item["weight"], item["id"]),
@@ -316,10 +342,11 @@ def _greedy_scores(items: list[dict], budget: int) -> dict[str, int]:
     }
     results = {}
     for label, order in orders.items():
-        remaining, score = budget, 0
+        remaining, left, score = budget, record_budget // RECORD_UNIT, 0
         for item in sorted(items, key=order):
-            if item["weight"] <= remaining:
+            if item["weight"] <= remaining and item["records"] <= left:
                 remaining -= item["weight"]
+                left -= item["records"]
                 score += item["value"]
         results[label] = score
     return results
@@ -655,16 +682,53 @@ def test_shard_count_follows_the_policy(primary_outputs):
 # --------------------------------------------------------------------------
 # The plan has to be an optimum, not a heuristic
 # --------------------------------------------------------------------------
-def test_plan_is_within_budget_and_charged_upward(primary_outputs):
-    """Sizes are charged in whole mebibytes, rounded up, inside the budget."""
-    _, _, _, plan = primary_outputs
+def test_plan_is_within_both_budgets_and_charged_upward(primary_outputs):
+    """Bytes are charged in whole mebibytes and records in whole thousands, both up.
+
+    #v1.9 bounds the merge twice over, and the two budgets do not track each
+    other: a plan that fits the bytes and overruns the records is not a plan.
+    """
+    _, summary, _, plan = primary_outputs
+    policy = _load_json(POLICY_PATH)
     entries = {e["id"]: e for e in _load_json(REPAIRED_PATH)["levels"]["0"]}
     for row in plan:
         assert row["segment"] in entries, f"{row['segment']} is not a level-0 candidate"
-        expected = max(1, -(-int(entries[row["segment"]]["bytes"]) // MIB))
-        assert row["charged_mib"] == expected, row["segment"]
-    budget = _load_json(POLICY_PATH)["merge_budget_mib"]
-    assert sum(row["charged_mib"] for row in plan) <= budget
+        entry = entries[row["segment"]]
+        assert row["charged_mib"] == max(1, -(-int(entry["bytes"]) // MIB)), row["segment"]
+        assert row["charged_records"] == (
+            max(1, -(-int(entry["records"]) // RECORD_UNIT)) * RECORD_UNIT
+        ), row["segment"]
+    assert sum(row["charged_mib"] for row in plan) <= policy["merge_budget_mib"]
+    assert sum(row["charged_records"] for row in plan) <= policy["merge_record_budget"]
+    assert summary["plan_charged_records"] == sum(row["charged_records"] for row in plan)
+    assert summary["plan_record_budget"] == policy["merge_record_budget"]
+
+
+def test_the_record_budget_binds_and_is_not_slack(primary_outputs):
+    """The second budget changes the answer rather than decorating it.
+
+    Were the record budget loose enough to ignore, an engine that planned on
+    bytes alone would still be right and the rule would grade nothing. The best
+    selection under the byte budget alone is recomputed here and required to
+    overrun the record budget.
+    """
+    items = _plan_items(_load_json(REPAIRED_PATH)["levels"]["0"])
+    policy = _load_json(POLICY_PATH)
+    # "no record budget at all" is the sum of every candidate's charge, which
+    # bounds the table instead of blowing it up the way a huge literal would
+    unbounded = sum(item["records"] for item in items) * RECORD_UNIT
+    bytes_only, ids = _optimal_plan(items, policy["merge_budget_mib"], unbounded)
+    charged = {item["id"]: item for item in items}
+    spent = sum(charged[i]["records"] for i in ids) * RECORD_UNIT
+    assert spent > policy["merge_record_budget"], (
+        "the byte-optimal plan already fits the record budget, so the second "
+        "budget decides nothing"
+    )
+    _, summary, _, _ = primary_outputs
+    assert summary["plan_eliminated_overlap"] < bytes_only, (
+        "planning on bytes alone reaches the same score, so the record budget "
+        "costs nothing"
+    )
 
 
 def test_plan_attains_the_optimum(primary_outputs):
@@ -672,8 +736,10 @@ def test_plan_attains_the_optimum(primary_outputs):
     _, summary, _, plan = primary_outputs
     candidates = _load_json(REPAIRED_PATH)["levels"]["0"]
     items = _plan_items(candidates)
-    budget = _load_json(POLICY_PATH)["merge_budget_mib"]
-    best_score, best_ids = _optimal_plan(items, budget)
+    policy = _load_json(POLICY_PATH)
+    best_score, best_ids = _optimal_plan(
+        items, policy["merge_budget_mib"], policy["merge_record_budget"]
+    )
 
     scores = {item["id"]: item["value"] for item in items}
     achieved = sum(scores[row["segment"]] for row in plan)
@@ -692,8 +758,10 @@ def test_greedy_planners_score_strictly_below_the_optimum(primary_outputs):
     """
     _, summary, _, _ = primary_outputs
     items = _plan_items(_load_json(REPAIRED_PATH)["levels"]["0"])
-    budget = _load_json(POLICY_PATH)["merge_budget_mib"]
-    for label, score in _greedy_scores(items, budget).items():
+    policy = _load_json(POLICY_PATH)
+    for label, score in _greedy_scores(
+        items, policy["merge_budget_mib"], policy["merge_record_budget"]
+    ).items():
         assert score < summary["plan_eliminated_overlap"], (
             f"the {label} heuristic already reaches the optimum"
         )

@@ -12,6 +12,7 @@ DEFAULT_OUTPUT_DIR = Path("/app/output")
 
 SCHEMA_VERSION = "segment-index-v1"
 MIB = 1048576
+RECORD_UNIT = 1000  # v1.9 charges records in whole thousands
 
 
 def load_base(path: Path) -> list[dict]:
@@ -82,15 +83,19 @@ def overlap_scores(segments: list[dict]) -> dict[str, int]:
     return scores
 
 
-def compaction_plan(segments: list[dict], budget_mib: int) -> dict:
+def compaction_plan(segments: list[dict], budget_mib: int, budget_records: int) -> dict:
     """Choose the level-0 merge set that eliminates the most overlap.
 
-    The selection is an exact optimum over the whole candidate set, not a
-    greedy pass: 1.9 requires the planner to return the best achievable score
-    for the budget, and a density-ordered walk regularly leaves a better
-    packing on the table. Sizes are charged in whole mebibytes, rounded up.
-    Among selections of equal score the plan takes the fewest segments, then
-    the smallest charged size, then the lexicographically smallest id list.
+    The selection is an exact optimum over the whole candidate set, not a greedy
+    pass: 1.9 requires the planner to return the best achievable score, and a
+    density-ordered walk regularly leaves a better packing on the table. The
+    merge is bounded twice, in bytes and in records, and the two do not track
+    each other, so the search runs over both at once -- the best selection under
+    the byte budget alone overruns the record budget on this tree. Bytes are
+    charged in whole mebibytes and records in whole thousands, both rounded up.
+    Among selections of equal score the plan takes the fewest segments, then the
+    smallest charged size, then the smallest charged records, then the
+    lexicographically smallest id list.
     """
     scores = overlap_scores(segments)
     items = sorted(
@@ -98,53 +103,51 @@ def compaction_plan(segments: list[dict], budget_mib: int) -> dict:
             {
                 "id": s["id"],
                 "weight": max(1, -(-int(s["bytes"]) // MIB)),
+                "records": max(1, -(-int(s["records"]) // RECORD_UNIT)),
                 "value": scores[s["id"]],
             }
             for s in segments
         ),
         key=lambda item: item["id"],
     )
+    record_cap = budget_records // RECORD_UNIT
 
-    # All four keys are packed into a single integer so the search never has to
-    # break a tie after the fact: overlap dominates, then the segment count,
-    # then the charged size, and last a per-candidate bit that is worth more the
-    # earlier the id sorts, which is exactly "lexicographically smallest list".
-    count = len(items)
-    bit = 1 << count
-    weight_unit = bit
-    count_unit = (max(item["weight"] for item in items) * count + 1) * weight_unit
-    value_unit = (count + 1) * count_unit
-
-    rows = [[0] * (budget_mib + 1) for _ in range(count + 1)]
-    for i in range(count - 1, -1, -1):
-        item, here, nxt = items[i], rows[i], rows[i + 1]
-        gain = (
-            item["value"] * value_unit
-            - count_unit
-            - item["weight"] * weight_unit
-            + (1 << (count - 1 - i))
-        )
-        for capacity in range(budget_mib + 1):
-            skip = nxt[capacity]
-            here[capacity] = (
-                max(skip, nxt[capacity - item["weight"]] + gain)
-                if item["weight"] <= capacity
-                else skip
+    # Forward search over the loads both budgets allow. A state is the pair of
+    # charges reached; each keeps the best ordering key that reaches it, so the
+    # tie-break chain never has to be applied after the fact.
+    best: dict[tuple[int, int], tuple] = {(0, 0): (0, 0, 0, 0, ())}
+    for item in items:
+        nxt = dict(best)
+        for (mib, recs), state in best.items():
+            load_mib, load_recs = mib + item["weight"], recs + item["records"]
+            if load_mib > budget_mib or load_recs > record_cap:
+                continue
+            candidate = (
+                state[0] + item["value"],
+                state[1] - 1,
+                -load_mib,
+                -load_recs,
+                state[4] + (item["id"],),
             )
+            held = nxt.get((load_mib, load_recs))
+            if held is None or candidate[:4] > held[:4] or (
+                candidate[:4] == held[:4] and candidate[4] < held[4]
+            ):
+                nxt[(load_mib, load_recs)] = candidate
+        best = nxt
 
-    chosen: list[str] = []
-    capacity = budget_mib
-    for i, item in enumerate(items):
-        if item["weight"] <= capacity and rows[i][capacity] != rows[i + 1][capacity]:
-            chosen.append(item["id"])
-            capacity -= item["weight"]
+    winner = max(best.values(), key=lambda state: state[:4])
+    tied = [state for state in best.values() if state[:4] == winner[:4]]
+    chosen = sorted(min(tied, key=lambda state: state[4])[4])
 
     picked = {item["id"]: item for item in items}
     return {
         "segments": chosen,
         "eliminated_overlap": sum(picked[i]["value"] for i in chosen),
         "charged_mib": sum(picked[i]["weight"] for i in chosen),
+        "charged_records": sum(picked[i]["records"] for i in chosen) * RECORD_UNIT,
         "budget_mib": budget_mib,
+        "budget_records": budget_records,
         "candidate_count": len(items),
     }
 
@@ -160,7 +163,18 @@ def main() -> int:
     rows = load_base(Path(args.input))
 
     shards = shard_boundaries(rows, int(policy["shard_count"]))
-    plan = compaction_plan(manifest["levels"]["0"], int(policy["merge_budget_mib"]))
+    plan = compaction_plan(
+        manifest["levels"]["0"],
+        int(policy["merge_budget_mib"]),
+        int(policy["merge_record_budget"]),
+    )
+    charged = {
+        s["id"]: (
+            max(1, -(-int(s["bytes"]) // MIB)),
+            max(1, -(-int(s["records"]) // RECORD_UNIT)) * RECORD_UNIT,
+        )
+        for s in manifest["levels"]["0"]
+    }
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -169,24 +183,10 @@ def main() -> int:
     )
     with (output_dir / "compaction_plan.jsonl").open("w", encoding="utf-8") as handle:
         for seg_id in plan["segments"]:
+            mib, records = charged[seg_id]
             handle.write(
                 json.dumps(
-                    {
-                        "segment": seg_id,
-                        "charged_mib": max(
-                            1,
-                            -(
-                                -int(
-                                    next(
-                                        s["bytes"]
-                                        for s in manifest["levels"]["0"]
-                                        if s["id"] == seg_id
-                                    )
-                                )
-                                // MIB
-                            ),
-                        ),
-                    },
+                    {"segment": seg_id, "charged_mib": mib, "charged_records": records},
                     separators=(",", ":"),
                     sort_keys=True,
                 )
@@ -208,7 +208,9 @@ def main() -> int:
         "plan_segment_count": len(plan["segments"]),
         "plan_eliminated_overlap": plan["eliminated_overlap"],
         "plan_charged_mib": plan["charged_mib"],
+        "plan_charged_records": plan["charged_records"],
         "plan_budget_mib": plan["budget_mib"],
+        "plan_record_budget": plan["budget_records"],
     }
     (output_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"

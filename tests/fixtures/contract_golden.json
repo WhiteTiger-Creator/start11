@@ -19,10 +19,12 @@
       "container": "jsonl",
       "element_fields": [
         "segment",
-        "charged_mib"
+        "charged_mib",
+        "charged_records"
       ],
       "field_types": {
         "charged_mib": "integer",
+        "charged_records": "integer",
         "segment": "string"
       },
       "key_set": "exactly these keys and no others",
@@ -67,7 +69,9 @@
         "min_shard_value_bytes": "integer",
         "plan_budget_mib": "integer",
         "plan_charged_mib": "integer",
+        "plan_charged_records": "integer",
         "plan_eliminated_overlap": "integer",
+        "plan_record_budget": "integer",
         "plan_segment_count": "integer",
         "schema_version": "string",
         "shard_count": "integer"
@@ -89,7 +93,9 @@
         "plan_segment_count",
         "plan_eliminated_overlap",
         "plan_charged_mib",
-        "plan_budget_mib"
+        "plan_charged_records",
+        "plan_budget_mib",
+        "plan_record_budget"
       ],
       "schema_version_value": "segment-index-v1"
     }

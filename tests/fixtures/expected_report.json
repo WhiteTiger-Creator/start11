@@ -1,6 +1,6 @@
 {
   "alternate": {
-    "plan_digest": "3993cd19d08bfaf1597923ab47bf9d90644a3c5d28bdcbd804e9cbff66af8500",
+    "plan_digest": "f80fe8eaf267b2321d9c6f9f233add696028c32b03833ffc97f17b82bac9de55",
     "shard_digest": "d43c7b0c6adf4e19268f2b5a1cb40b3a9c0f8b2c52db6d793980408a91ed9089",
     "summary": {
       "base_key_count": 114983,
@@ -14,8 +14,10 @@
       "min_shard_value_bytes": 2375231,
       "plan_budget_mib": 105,
       "plan_charged_mib": 105,
-      "plan_eliminated_overlap": 461,
-      "plan_segment_count": 24,
+      "plan_charged_records": 88000,
+      "plan_eliminated_overlap": 436,
+      "plan_record_budget": 88000,
+      "plan_segment_count": 21,
       "schema_version": "segment-index-v1",
       "shard_count": 96
     }
@@ -28,7 +30,7 @@
   ],
   "expected_manifest_digest": "0e05174471e0c9e4c95814d830a8a67bfa3d5ad794abc8f9bef95a846c93e597",
   "primary": {
-    "plan_digest": "3993cd19d08bfaf1597923ab47bf9d90644a3c5d28bdcbd804e9cbff66af8500",
+    "plan_digest": "f80fe8eaf267b2321d9c6f9f233add696028c32b03833ffc97f17b82bac9de55",
     "shard_digest": "a2bfa011559f582582a914e28559c396687963bbce02ce88943b2cb113e838e1",
     "summary": {
       "base_key_count": 172391,
@@ -42,12 +44,14 @@
       "min_shard_value_bytes": 2647463,
       "plan_budget_mib": 105,
       "plan_charged_mib": 105,
-      "plan_eliminated_overlap": 461,
-      "plan_segment_count": 24,
+      "plan_charged_records": 88000,
+      "plan_eliminated_overlap": 436,
+      "plan_record_budget": 88000,
+      "plan_segment_count": 21,
       "schema_version": "segment-index-v1",
       "shard_count": 96
     }
   },
-  "release_notes_digest": "4512d706d025cdb72a0a00e8a9ec17dffc76d68fc8dd5f125acaea17eabc3983",
+  "release_notes_digest": "09af59800a964c823bcc71f90ad93088e04516900739b9959034a220ba1e4e56",
   "segment_tree_digest": "1c6425acebbcd6b3644b3e0fd015107bd3d33a2205003dc54bf1480f22367d5d"
 }
