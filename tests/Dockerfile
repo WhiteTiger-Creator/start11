@@ -36,4 +36,7 @@ COPY fixtures/ /tests/fixtures/
 
 # Keep the held-out fixtures readable only by root, so the unprivileged candidate cannot read
 # expected outputs even though it can be handed staged inputs.
-RUN chmod -R go-rwx /tests
+# Closing the two directories is enough: without search permission on them
+# nothing below can be reached by another uid, so no recursive mode change
+# is needed.
+RUN chmod 700 /tests /tests/fixtures

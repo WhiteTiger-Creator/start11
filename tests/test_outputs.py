@@ -72,12 +72,21 @@ def _load_json(path: Path):
 
 
 def _load_jsonl(path: Path) -> list:
-    """Read a JSON-lines document, ignoring blank lines."""
-    return [
-        json.loads(line)
-        for line in Path(path).read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    """Read a contracted JSONL artifact, taking every line as written.
+
+    Skipping blank lines here softened a contract that says one compact object
+    per line: a run that padded its output with empty lines read back the same
+    as a clean one and scored full marks. A blank line is a malformed line and
+    is read as one.
+    """
+    text = Path(path).read_text(encoding="utf-8")
+    if not text:
+        return []
+    assert text.endswith("\n"), f"{Path(path).name} has no trailing newline"
+    lines = text.split("\n")[:-1]
+    for number, line in enumerate(lines, start=1):
+        assert line.strip(), f"{Path(path).name} line {number} is blank"
+    return [json.loads(line) for line in lines]
 
 
 def _publish_inputs() -> None:
@@ -466,6 +475,18 @@ def test_shipped_base_was_actually_incomplete():
 # --------------------------------------------------------------------------
 # Step one drives step two: wrong reconciliations must move the outputs
 # --------------------------------------------------------------------------
+def _a_segment_at_level(level: int) -> str:
+    """A segment id the repaired manifest really carries at that level.
+
+    The perturbed bases below have to stay consistent with the manifest the
+    engine reads beside them, so a submission that validates one against the
+    other is not failed for a rule the instruction never states.
+    """
+    entries = _load_json(REPAIRED_PATH)["levels"][str(level)]
+    assert entries, f"the repaired manifest has no level-{level} segment"
+    return sorted(entry["id"] for entry in entries)[0]
+
+
 def _variant_bases() -> dict[str, list]:
     """Plausible misreadings of the release notes, as perturbed bases.
 
@@ -488,19 +509,30 @@ def _variant_bases() -> dict[str, list]:
     # 2.1 precedence: a sequence-only winner picks a different version, which
     # shows up as different stored sizes and depths for the affected keys.
     reprecedenced = [dict(row) for row in rows]
+    deeper = _a_segment_at_level(2)
     for row in reprecedenced[::23]:
+        # the row moves to a level the manifest really has, and to a segment
+        # that level really holds: an engine that sanity-checks its input
+        # against the repaired manifest must not be failed for doing so, which
+        # naming a level-2 row against a level-0 segment would have done.
         row["level"] = 2
+        row["segment"] = deeper
         row["value_bytes"] = max(1, row["value_bytes"] // 2)
     variants["sequence_only_precedence"] = reprecedenced
     # 1.3 recovery: the torn segment truncated instead of discarded, so its
     # surviving head contributes extra keys.
     truncated = [dict(row) for row in rows]
+    # The keys are what this variant is about: a torn segment truncated rather
+    # than discarded contributes extra keys. They are attributed to a segment
+    # the manifest admitted, so the base stays consistent with it and an engine
+    # that checks the two against each other is not failed for the check.
+    admitted = _a_segment_at_level(0)
     truncated.extend(
         {
             "key": f"zzrecovered:{i:07d}",
             "level": 0,
             "seq": row["seq"] + 1,
-            "segment": FIXTURE["expected_discarded"][0],
+            "segment": admitted,
             "value_bytes": 512,
             "version_count": 1,
         }
@@ -856,12 +888,19 @@ def test_rebuild_imports_only_the_standard_library():
     image rather than something the task states and grades. Modules the
     submission ships beside the rebuild are its own code, not a dependency.
     """
-    found = _imported_roots(WORKFLOW_PATH.read_text(encoding="utf-8"))
-    local = {path.stem for path in WORKFLOW_PATH.parent.glob("*.py")}
+    # Every module the submission ships under /app/workflow, not just the entry
+    # point: reading rebuild_index.py alone let a helper beside it import a
+    # third-party package unnoticed.
+    sources = sorted(WORKFLOW_PATH.parent.rglob("*.py"))
+    assert WORKFLOW_PATH in sources, "the rebuild is not where the contract puts it"
+    local = {path.stem for path in sources}
     local |= {path.name for path in WORKFLOW_PATH.parent.iterdir() if path.is_dir()}
-    outside = {name for name in found
-               if name not in sys.stdlib_module_names and name not in local}
-    assert not outside, f"the rebuild imports outside the standard library: {sorted(outside)}"
+    for source in sources:
+        found = _imported_roots(source.read_text(encoding="utf-8"))
+        outside = {name for name in found
+                   if name not in sys.stdlib_module_names and name not in local}
+        assert not outside, (
+            f"{source.name} imports outside the standard library: {sorted(outside)}")
 
 
 def test_rebuild_is_idempotent():
@@ -998,10 +1037,20 @@ def test_original_snapshot_preserved():
 
 
 def test_original_snapshot_is_wrong():
-    """The shipped engine must not already produce the graded outputs."""
-    _, summary, shards, plan = _run_pipeline(
-        script_path=ORIGINAL_WORKFLOW_PATH, output_dir=WORK_DIR / "orig"
-    )
+    """The shipped engine must not already produce the graded outputs.
+
+    What is being shown here is that the migration branch is wrong, not that it
+    works: if it cannot even run to completion over the reconciled inputs it has
+    certainly not produced the graded artifacts, so a non-zero exit settles the
+    question rather than failing the submission for it.
+    """
+    target = WORK_DIR / "orig"
+    try:
+        _, summary, shards, plan = _run_pipeline(
+            script_path=ORIGINAL_WORKFLOW_PATH, output_dir=target
+        )
+    except AssertionError:
+        return
     assert summary != FIXTURE["primary"]["summary"]
     assert _digest(shards) != FIXTURE["primary"]["shard_digest"]
     assert _digest(plan) != FIXTURE["primary"]["plan_digest"]
