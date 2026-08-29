@@ -37,6 +37,8 @@ def shard_boundaries(rows: list[dict], shard_count: int) -> list[dict]:
     k/shard_count of the whole, so the split follows the bytes rather than the
     key count, and a shard holding one enormous value stays a shard of one.
     """
+    if not rows:
+        return []
     total = sum(int(row["value_bytes"]) for row in rows)
     shards: list[dict] = []
     running = 0

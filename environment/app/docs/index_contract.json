@@ -156,5 +156,12 @@
       "sort": "each level list ascending by segment id; discarded_segments ascending"
     }
   },
-  "runtime_budget_seconds": 120
+  "runtime_budget_seconds": 120,
+  "policy_fields": {
+    "shard_count": "how many shards the base is split into",
+    "min_shard_keys": "the fewest keys a shard may carry: a window that would fall below it is not emitted as a shard at all, so an empty window is dropped rather than written out",
+    "plan_level": "the level the compaction plan selects from",
+    "merge_budget_mib": "the plan's stored-byte budget, charged in whole mebibytes",
+    "merge_record_budget": "the plan's record budget, charged in whole units of 1000 records"
+  }
 }

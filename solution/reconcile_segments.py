@@ -120,9 +120,14 @@ def build_base() -> dict:
         "discarded_segments": sorted(discarded),
         "engine_version": manifest["engine_version"],
         "levels": {
+            # Every level comes out in the same order, id ascending. Levels 1
+            # and 2 are carried forward untouched by the reconciliation, but
+            # copying them in whatever order the shipped manifest held would
+            # make the repaired file's ordering depend on the input rather than
+            # on the contract.
             "0": sorted(level_zero, key=lambda e: e["id"]),
-            "1": manifest["levels"]["1"],
-            "2": manifest["levels"]["2"],
+            "1": sorted(manifest["levels"]["1"], key=lambda e: e["id"]),
+            "2": sorted(manifest["levels"]["2"], key=lambda e: e["id"]),
         },
         "shard_count": manifest["shard_count"],
     }

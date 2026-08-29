@@ -475,16 +475,38 @@ def test_shipped_base_was_actually_incomplete():
 # --------------------------------------------------------------------------
 # Step one drives step two: wrong reconciliations must move the outputs
 # --------------------------------------------------------------------------
-def _a_segment_at_level(level: int) -> str:
-    """A segment id the repaired manifest really carries at that level.
+def _a_segment_entry_at_level(level: int) -> dict:
+    """A segment entry the repaired manifest really carries at that level.
 
     The perturbed bases below have to stay consistent with the manifest the
     engine reads beside them, so a submission that validates one against the
-    other is not failed for a rule the instruction never states.
+    other is not failed for a rule the instruction never states. Consistent
+    means the level and the segment id, and it also means the key range the
+    entry records: a row attributed to a segment whose min_key/max_key do not
+    cover it contradicts the manifest just as plainly as a wrong level does.
     """
     entries = _load_json(REPAIRED_PATH)["levels"][str(level)]
     assert entries, f"the repaired manifest has no level-{level} segment"
-    return sorted(entry["id"] for entry in entries)[0]
+    return sorted(entries, key=lambda entry: entry["id"])[0]
+
+
+def _a_segment_at_level(level: int) -> str:
+    """The id of that segment."""
+    return _a_segment_entry_at_level(level)["id"]
+
+
+def _keys_inside(entry: dict, count: int, taken: set) -> list[str]:
+    """Fresh keys that sort inside the entry's recorded range.
+
+    Suffixing min_key keeps every one of them above min_key and below max_key,
+    since max_key differs from min_key before the suffix begins.
+    """
+    low, high = entry["min_key"], entry["max_key"]
+    minted = [f"{low}~{i:05d}" for i in range(count)]
+    for key in minted:
+        assert low < key < high, f"{key} falls outside {low}..{high}"
+        assert key not in taken, f"{key} is already in the base"
+    return minted
 
 
 def _variant_bases() -> dict[str, list]:
@@ -526,17 +548,18 @@ def _variant_bases() -> dict[str, list]:
     # than discarded contributes extra keys. They are attributed to a segment
     # the manifest admitted, so the base stays consistent with it and an engine
     # that checks the two against each other is not failed for the check.
-    admitted = _a_segment_at_level(0)
+    admitted = _a_segment_entry_at_level(0)
+    minted = _keys_inside(admitted, 400, {row["key"] for row in rows})
     truncated.extend(
         {
-            "key": f"zzrecovered:{i:07d}",
+            "key": key,
             "level": 0,
             "seq": row["seq"] + 1,
-            "segment": admitted,
+            "segment": admitted["id"],
             "value_bytes": 512,
             "version_count": 1,
         }
-        for i, row in enumerate(rows[:400])
+        for key, row in zip(minted, rows[:400])
     )
     variants["torn_segment_truncated"] = sorted(truncated, key=lambda r: _byte_key(r["key"]))
     return variants
@@ -626,6 +649,11 @@ def test_shards_are_contiguous_and_cover_the_base(primary_outputs):
     """The shards partition the base: numbered from zero, no key lost."""
     _, summary, shards, _ = primary_outputs
     assert [row["shard"] for row in shards] == list(range(len(shards)))
+    # index_policy.json states min_shard_keys as the fewest keys a shard may
+    # carry, so a window below it is dropped rather than written out
+    floor = int(_load_json(POLICY_PATH)["min_shard_keys"])
+    thin = [row["shard"] for row in shards if row["key_count"] < floor]
+    assert not thin, f"shards below the policy floor of {floor} keys: {thin}"
     rows = _load_jsonl(BASE_PATH)
     assert sum(row["key_count"] for row in shards) == len(rows)
     assert sum(row["value_bytes"] for row in shards) == sum(
