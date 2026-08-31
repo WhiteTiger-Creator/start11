@@ -43,6 +43,104 @@ MIB = 1048576
 RECORD_UNIT = 1000  # v1.9 charges records in whole thousands
 WORK_DIR = Path("/candidate-work")
 CANDIDATE_UID = 65534
+
+
+def _setpriv_prefix(base: list) -> list:
+    """The strictest setpriv invocation this image actually supports.
+
+    Dropping the uid is not the whole of it: a candidate that kept inheritable
+    or bounding-set capabilities could regain privilege across an exec. The two
+    flags are probed rather than assumed, because a util-linux without them
+    would make every run fail on the flag rather than on the task.
+    """
+    strict = base + ["--inh-caps=-all", "--bounding-set=-all"]
+    try:
+        probe = subprocess.run(strict + ["/bin/true"], capture_output=True, timeout=30)
+        if probe.returncode == 0:
+            return strict
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return base
+
+
+# Resource ceilings for anything run as the candidate. Deliberately not
+# RLIMIT_AS or RLIMIT_DATA: a language runtime that reserves a large virtual
+# arena at start-up dies under those, so they would kill a correct program
+# rather than a runaway one. These bound the failure modes that actually escape
+# a process group -- forking without end, filling the disk, dumping core.
+_CANDIDATE_NPROC = 512
+_CANDIDATE_FSIZE = 512 * 1024 * 1024
+_CANDIDATE_NOFILE = 1024
+
+
+def _apply_rlimits() -> None:
+    """Run in the child between fork and exec: own session, plus ceilings."""
+    import resource
+
+    for what, limit in (
+        (resource.RLIMIT_NPROC, _CANDIDATE_NPROC),
+        (resource.RLIMIT_FSIZE, _CANDIDATE_FSIZE),
+        (resource.RLIMIT_NOFILE, _CANDIDATE_NOFILE),
+        (resource.RLIMIT_CORE, 0),
+    ):
+        try:
+            _soft, hard = resource.getrlimit(what)
+            ceiling = limit if hard == resource.RLIM_INFINITY else min(limit, hard)
+            resource.setrlimit(what, (ceiling, ceiling))
+        except (ValueError, OSError):
+            continue
+    os.setsid()
+
+
+def _pids_owned_by(uid: int) -> list:
+    """Every live pid whose owner is `uid`, read from /proc."""
+    pids = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            if os.stat("/proc/" + entry).st_uid == uid:
+                pids.append(int(entry))
+        except OSError:
+            continue
+    return pids
+
+
+def reap_candidate_uid(uid: int = CANDIDATE_UID) -> None:
+    """Kill everything still running as the candidate, whatever group it is in.
+
+    Killing the process group is not enough on its own: a submitted program can
+    call setsid and leave its own group, and would then survive into later tests
+    -- holding the staged inputs of the next run, or still writing into an
+    output directory being read. Ownership is the property that cannot be
+    escaped, so the sweep is by owner.
+    """
+    import signal as _signal
+    import time as _time
+
+    for _ in range(50):
+        pids = _pids_owned_by(uid)
+        if not pids:
+            return
+        for pid in pids:
+            try:
+                os.kill(pid, _signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                continue
+        for pid in pids:
+            try:
+                os.waitpid(pid, os.WNOHANG)
+            except (ChildProcessError, OSError):
+                continue
+        _time.sleep(0.02)
+
+
+_SETPRIV = _setpriv_prefix([
+    "setpriv", f"--reuid={CANDIDATE_UID}", f"--regid={CANDIDATE_UID}",
+    "--clear-groups", "--no-new-privs",
+])
+
+
 CANDIDATE_ENV = {
     "PATH": "/usr/local/bin:/usr/bin:/bin",
     "HOME": "/candidate-work",
@@ -179,7 +277,7 @@ def _run_candidate(command: list, cwd: Path) -> subprocess.CompletedProcess:
             env=dict(CANDIDATE_ENV),
             stdout=out,
             stderr=err,
-            start_new_session=True,
+            preexec_fn=_apply_rlimits,
         )
         # Session leader, so the group id equals the pid; read it before the wait.
         pgid = proc.pid
@@ -190,10 +288,12 @@ def _run_candidate(command: list, cwd: Path) -> subprocess.CompletedProcess:
             proc.wait(timeout=RUNTIME_BUDGET_SEC)
         except subprocess.TimeoutExpired:
             _reap_group(pgid)
+            reap_candidate_uid()
             proc.wait()
             raise
         finally:
             _reap_group(pgid)
+            reap_candidate_uid()
         out.seek(0)
         err.seek(0)
         return subprocess.CompletedProcess(command, proc.returncode, out.read(), err.read())
@@ -216,12 +316,7 @@ def _run_pipeline(script_path: Path = WORKFLOW_PATH, input_path: Path | None = N
     target.mkdir(parents=True, exist_ok=True)
     os.chmod(target, 0o1777)
 
-    command = [
-        "setpriv",
-        f"--reuid={CANDIDATE_UID}",
-        f"--regid={CANDIDATE_UID}",
-        "--clear-groups",
-        "--no-new-privs",
+    command = _SETPRIV + [
         sys.executable,
         str(script_path),
         "--output-dir",
@@ -862,8 +957,8 @@ def test_output_dir_holds_exactly_the_three_contracted_files():
     target.mkdir(parents=True, exist_ok=True)
     os.chmod(target, 0o1777)
     completed = _run_candidate(
-        ["setpriv", f"--reuid={CANDIDATE_UID}", f"--regid={CANDIDATE_UID}",
-         "--clear-groups", "--no-new-privs", sys.executable, str(WORKFLOW_PATH),
+        _SETPRIV + [
+        sys.executable, str(WORKFLOW_PATH),
          "--output-dir", str(target)],
         WORK_DIR)
     assert completed.returncode == 0, completed.stderr[-2000:]
@@ -966,13 +1061,8 @@ def test_cli_defaults_match_an_explicit_run(primary_outputs):
             stale.unlink()
     os.chmod(default_dir, 0o1777)
     completed = _run_candidate(
-        [
-            "setpriv",
-            f"--reuid={CANDIDATE_UID}",
-            f"--regid={CANDIDATE_UID}",
-            "--clear-groups",
-            "--no-new-privs",
-            sys.executable,
+        _SETPRIV + [
+        sys.executable,
             str(WORKFLOW_PATH),
         ],
         WORK_DIR,
@@ -1042,13 +1132,8 @@ def test_submitted_program_runs_unprivileged_and_cannot_reach_the_reward():
     )
     os.chmod(probe, 0o644)
     result = _run_candidate(
-        [
-            "setpriv",
-            f"--reuid={CANDIDATE_UID}",
-            f"--regid={CANDIDATE_UID}",
-            "--clear-groups",
-            "--no-new-privs",
-            sys.executable,
+        _SETPRIV + [
+        sys.executable,
             str(probe),
         ],
         WORK_DIR,

@@ -1,4 +1,5 @@
 artifacts = ["/app"]
+schema_version = "2.0"
 name = "segment-index-reconciliation"
 
 [metadata]
