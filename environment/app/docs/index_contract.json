@@ -159,7 +159,7 @@
   "runtime_budget_seconds": 120,
   "policy_fields": {
     "shard_count": "how many shards the base is split into",
-    "min_shard_keys": "the fewest keys a shard may carry: a window that would fall below it is not emitted as a shard at all, so an empty window is dropped rather than written out",
+    "min_shard_keys": "the fewest keys a shard may carry: a window falling below it is not closed and its keys carry into the next shard instead, and keys left at the end that cannot make a shard of their own join the last shard emitted, so every key sits in exactly one shard whatever the floor is set to and a floor of one only drops empty windows",
     "plan_level": "the level the compaction plan selects from",
     "merge_budget_mib": "the plan's stored-byte budget, charged in whole mebibytes",
     "merge_record_budget": "the plan's record budget, charged in whole units of 1000 records"

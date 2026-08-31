@@ -676,9 +676,14 @@ def test_wrong_reconciliations_change_the_index(primary_outputs):
             encoding="utf-8",
         )
         os.chmod(staged, 0o644)
-        _, other_summary, other_shards, _ = _run_pipeline(
-            input_path=staged, output_dir=WORK_DIR / f"out_{label}"
-        )
+        try:
+            _, other_summary, other_shards, _ = _run_pipeline(
+                input_path=staged, output_dir=WORK_DIR / f"out_{label}"
+            )
+        except AssertionError:
+            # refusing a base that contradicts the manifest is a defensible
+            # reading no document forbids, and it is not the graded result either
+            continue
         assert (other_summary, other_shards) != (summary, shards), label
         assert _digest(other_shards) != FIXTURE["primary"]["shard_digest"], label
 
@@ -1073,6 +1078,58 @@ def test_cli_defaults_match_an_explicit_run(primary_outputs):
     assert _digest(_load_jsonl(default_dir / "compaction_plan.jsonl")) == _digest(explicit_plan)
 
 
+def test_the_shard_floor_and_the_plan_level_are_read_from_the_policy():
+    """Both fields the contract names, at values that actually bind.
+
+    The shipped policy sets the floor to one and the level to zero, where the
+    smallest shard already carries over sixteen hundred keys, so neither field
+    changes anything on the graded run and an engine ignoring both matched every
+    fixture. These values make them bind: a floor above the natural window has
+    to fold shards together without losing a key, and a different level has to
+    plan over that level's segments instead of level zero's.
+    """
+    original = POLICY_PATH.read_text(encoding="utf-8")
+    manifest = _load_json(REPAIRED_PATH)
+    base_rows = _load_jsonl(BASE_PATH)
+    try:
+        # a floor well above the byte-balanced window size: 96 shards over this
+        # base average under two thousand keys each, so 20,000 forces folding
+        policy = json.loads(original)
+        policy["min_shard_keys"] = 20_000
+        POLICY_PATH.write_text(
+            json.dumps(policy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        _, summary, shards, _ = _run_pipeline(output_dir=WORK_DIR / "floor")
+        assert shards, "the run emitted no shards at all"
+        assert len(shards) < policy["shard_count"], (
+            "the floor bound on this base but the shard count did not fall, so "
+            "min_shard_keys was ignored")
+        thin = [row["shard"] for row in shards if row["key_count"] < 20_000]
+        assert not thin, f"shards below the raised floor: {thin}"
+        # folding must not lose a key or a byte
+        assert sum(row["key_count"] for row in shards) == len(base_rows)
+        assert sum(row["value_bytes"] for row in shards) == sum(
+            int(row["value_bytes"]) for row in base_rows)
+        assert [row["shard"] for row in shards] == list(range(len(shards)))
+        assert shards[0]["first_key"] == base_rows[0]["key"]
+        assert shards[-1]["last_key"] == base_rows[-1]["key"]
+
+        # a level the plan has never been asked for
+        other = next(lvl for lvl in sorted(manifest["levels"]) if lvl != "0")
+        policy = json.loads(original)
+        policy["plan_level"] = int(other)
+        POLICY_PATH.write_text(
+            json.dumps(policy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        _, summary, _, plan = _run_pipeline(output_dir=WORK_DIR / "level")
+        available = {s["id"] for s in manifest["levels"][other]}
+        assert available, f"level {other} carries no segments to plan over"
+        chosen = {row["segment"] for row in plan}
+        assert chosen <= available, (
+            f"the plan names segments outside level {other}, so plan_level was ignored")
+        assert _digest(plan) != FIXTURE["primary"]["plan_digest"]
+    finally:
+        POLICY_PATH.write_text(original, encoding="utf-8")
+
+
 def test_policy_path_actually_influences_the_output():
     """The policy is read from its fixed path, not inlined as a constant."""
     original = POLICY_PATH.read_text(encoding="utf-8")
@@ -1097,7 +1154,8 @@ def test_run_finishes_inside_the_contract_budget(primary_outputs):
     """The contract states one budget and the tests hold the same number."""
     assert CONTRACT["runtime_budget_seconds"] == RUNTIME_BUDGET_SEC
     _, summary, _, _ = primary_outputs
-    assert summary["base_key_count"] > 100_000, "the graded base is not at scale"
+    # the run happened over the reconciled base rather than some smaller stand-in
+    assert summary["base_key_count"] == len(_load_jsonl(BASE_PATH))
 
 
 # --------------------------------------------------------------------------

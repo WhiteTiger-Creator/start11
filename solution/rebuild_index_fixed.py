@@ -30,12 +30,16 @@ def byte_key(value: str) -> bytes:
     return value.encode("utf-8")
 
 
-def shard_boundaries(rows: list[dict], shard_count: int) -> list[dict]:
+def shard_boundaries(rows: list[dict], shard_count: int, min_keys: int = 1) -> list[dict]:
     """Split the base into shards carrying an equal share of stored bytes.
 
     Shard k closes at the first key whose running total of stored bytes reaches
     k/shard_count of the whole, so the split follows the bytes rather than the
-    key count, and a shard holding one enormous value stays a shard of one.
+    key count, and a shard holding one enormous value stays a shard of one where
+    the policy floor allows it. A window that would fall short of min_shard_keys
+    is not closed: its keys carry into the next shard, and keys left over at the
+    end that cannot make a shard of their own join the last shard emitted, so
+    every key stays in exactly one shard whatever the floor is set to.
     """
     if not rows:
         return []
@@ -52,7 +56,7 @@ def shard_boundaries(rows: list[dict], shard_count: int) -> list[dict]:
             while index < len(rows) and running < target:
                 running += int(rows[index]["value_bytes"])
                 index += 1
-        if index <= start:
+        if index - start < max(1, min_keys):
             continue
         window = rows[start:index]
         shards.append(
@@ -66,6 +70,27 @@ def shard_boundaries(rows: list[dict], shard_count: int) -> list[dict]:
             }
         )
         start = index
+    if start < len(rows):
+        # the tail could not make a shard of its own, so it joins the last one
+        tail = rows[start:]
+        if shards:
+            last = shards[-1]
+            last["last_key"] = tail[-1]["key"]
+            last["key_count"] += len(tail)
+            last["value_bytes"] += sum(int(row["value_bytes"]) for row in tail)
+            last["max_version_count"] = max(
+                last["max_version_count"],
+                max(int(row["version_count"]) for row in tail))
+        else:
+            # a floor above the whole base leaves one shard carrying everything
+            shards.append({
+                "shard": 0,
+                "first_key": tail[0]["key"],
+                "last_key": tail[-1]["key"],
+                "key_count": len(tail),
+                "value_bytes": sum(int(row["value_bytes"]) for row in tail),
+                "max_version_count": max(int(row["version_count"]) for row in tail),
+            })
     return shards
 
 
@@ -164,9 +189,11 @@ def main() -> int:
     policy = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
     rows = load_base(Path(args.input))
 
-    shards = shard_boundaries(rows, int(policy["shard_count"]))
+    shards = shard_boundaries(rows, int(policy["shard_count"]),
+                              int(policy["min_shard_keys"]))
+    level = str(policy["plan_level"])
     plan = compaction_plan(
-        manifest["levels"]["0"],
+        manifest["levels"].get(level, []),
         int(policy["merge_budget_mib"]),
         int(policy["merge_record_budget"]),
     )
@@ -175,7 +202,7 @@ def main() -> int:
             max(1, -(-int(s["bytes"]) // MIB)),
             max(1, -(-int(s["records"]) // RECORD_UNIT)) * RECORD_UNIT,
         )
-        for s in manifest["levels"]["0"]
+        for s in manifest["levels"].get(level, [])
     }
 
     output_dir = Path(args.output_dir)
