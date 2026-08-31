@@ -2,7 +2,7 @@
   "merge_budget_mib": 105,
   "merge_record_budget": 88000,
   "min_shard_keys": 1,
-  "notes": "budgets and shard count only; the selection rule lives in the release notes",
+  "notes": "budgets, shard count, the shard key floor and the level the plan draws from; the selection rule itself lives in the release notes",
   "plan_level": 0,
   "shard_count": 96
 }

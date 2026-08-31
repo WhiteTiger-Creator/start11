@@ -513,6 +513,43 @@ def test_torn_segment_is_discarded_whole():
         assert discarded not in admitted
 
 
+def test_a_segment_whose_count_agrees_but_whose_checksum_does_not_is_discarded():
+    """The other half of v1.7's admission rule, which nothing used to reach.
+
+    Only one pending segment used to fail admission and it failed on its trailer
+    record count, so an engine that compared counts and never recomputed the
+    checksum was graded identical to one that did both. seg-0093 carries a body
+    whose length matches its trailer exactly and a checksum that does not.
+    """
+    body, trailer = [], None
+    for line in (PENDING_DIR / "seg-0093.jsonl").read_text(
+            encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("trailer"):
+            trailer = record
+        else:
+            body.append(record)
+    assert trailer is not None, "seg-0093 lost its trailer"
+    assert trailer["records"] == len(body), (
+        "seg-0093 must fail on its checksum alone, so its count has to agree")
+    running = hashlib.sha256()
+    for record in body:
+        running.update(
+            json.dumps(record, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+        running.update(b"\n")
+    assert running.hexdigest()[:32] != trailer["checksum"], (
+        "seg-0093's checksum agrees, so it no longer tests the rule")
+
+    repaired = _load_json(REPAIRED_PATH)
+    assert "seg-0093" in repaired["discarded_segments"]
+    assert "seg-0093" not in {entry["id"] for entry in repaired["levels"]["0"]}
+    keys = {row["key"] for row in _load_jsonl(BASE_PATH)}
+    assert not (keys & {record["k"] for record in body}), (
+        "keys from the discarded segment reached the base")
+
+
 def test_admitted_segments_are_numbered_from_the_checkpoint():
     """Recovered segments are placed and numbered as the release states."""
     repaired = _load_json(REPAIRED_PATH)
@@ -1078,6 +1115,87 @@ def test_cli_defaults_match_an_explicit_run(primary_outputs):
     assert _digest(_load_jsonl(default_dir / "compaction_plan.jsonl")) == _digest(explicit_plan)
 
 
+_MIB = 1048576
+
+
+def _tie_world(segments: list[tuple]) -> list[dict]:
+    """Level-0 entries in the manifest's own shape, from a compact description."""
+    return [
+        {"id": seg_id, "min_key": lo, "max_key": hi,
+         "bytes": mib * _MIB, "records": krecs * 1000}
+        for seg_id, lo, hi, mib, krecs in segments
+    ]
+
+
+# Three candidate sets where the optimal score is reached more than once. On the
+# graded tree the optimum is unique, so a planner that returned any optimal
+# subset matched every sealed fixture and the ordering 1.9 states went ungraded.
+_TIES = {
+    # fewest segments first: the lone wide segment ties with three pairs, and it
+    # is NOT the lexicographically smallest of them, so id order lands elsewhere
+    "fewest_segments": (
+        [("seg-t280", "a", "e", 6, 6),
+         ("seg-t281", "a", "a", 8, 8), ("seg-t282", "b", "b", 8, 8),
+         ("seg-t283", "c", "c", 8, 8), ("seg-t284", "d", "d", 8, 8),
+         ("seg-t205", "m", "o", 4, 4), ("seg-t206", "n", "p", 4, 4),
+         ("seg-t207", "o", "q", 4, 4)],
+        8, 8000, ["seg-t280"],
+    ),
+    # then smallest charged size: two single segments score alike, and the
+    # cheaper one sorts second, so id order would take the dearer
+    "smallest_charged_size": (
+        [("seg-t300", "a", "f", 5, 5),
+         ("seg-t301", "a", "a", 8, 8), ("seg-t302", "c", "c", 8, 8),
+         ("seg-t303", "e", "e", 8, 8),
+         ("seg-t310", "m", "r", 3, 5),
+         ("seg-t311", "m", "m", 8, 8), ("seg-t312", "o", "o", 8, 8),
+         ("seg-t313", "q", "q", 8, 8)],
+        5, 5000, ["seg-t310"],
+    ),
+    # and last the id list: six pairs of equal score, count and charge
+    "smallest_id_list": (
+        [("seg-t001", "a", "m", 10, 10), ("seg-t002", "b", "n", 10, 10),
+         ("seg-t003", "c", "o", 10, 10), ("seg-t004", "d", "p", 10, 10)],
+        20, 20000, ["seg-t001", "seg-t002"],
+    ),
+}
+
+
+def test_the_plan_breaks_a_tie_the_way_the_release_states():
+    """v1.9 orders equal-scoring plans; the graded tree never puts it to work.
+
+    Each world below has several selections reaching the optimal score, and in
+    each the link under test picks a different one from the links after it, so a
+    planner that stops at "an optimum" or applies the chain out of order fails.
+    """
+    original_policy = POLICY_PATH.read_text(encoding="utf-8")
+    original_manifest = REPAIRED_PATH.read_text(encoding="utf-8")
+    manifest = json.loads(original_manifest)
+    try:
+        for label, (segments, mib, records, expected) in _TIES.items():
+            staged = json.loads(original_manifest)
+            staged["levels"]["0"] = _tie_world(segments)
+            REPAIRED_PATH.write_text(
+                json.dumps(staged, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            policy = json.loads(original_policy)
+            policy["merge_budget_mib"] = mib
+            policy["merge_record_budget"] = records
+            POLICY_PATH.write_text(
+                json.dumps(policy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+            _, summary, _, plan = _run_pipeline(output_dir=WORK_DIR / f"tie_{label}")
+            chosen = [row["segment"] for row in plan]
+            assert chosen == expected, (
+                f"{label}: the plan took {chosen}, not the {expected} that 1.9's "
+                f"ordering names among the equally-scoring selections")
+            assert summary["plan_charged_mib"] <= mib
+            assert summary["plan_charged_records"] <= records
+    finally:
+        POLICY_PATH.write_text(original_policy, encoding="utf-8")
+        REPAIRED_PATH.write_text(original_manifest, encoding="utf-8")
+    assert json.loads(REPAIRED_PATH.read_text(encoding="utf-8")) == manifest
+
+
 def test_the_shard_floor_and_the_plan_level_are_read_from_the_policy():
     """Both fields the contract names, at values that actually bind.
 
@@ -1245,3 +1363,4 @@ def test_shipped_contract_matches_the_golden_copy():
     """
     shipped = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
     assert shipped == json.loads(GOLDEN_CONTRACT_PATH.read_text(encoding="utf-8"))
+

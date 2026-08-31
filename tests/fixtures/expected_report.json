@@ -6,7 +6,7 @@
       "base_key_count": 114983,
       "base_value_bytes": 228391913,
       "deepest_version_count": 16,
-      "discarded_segment_count": 1,
+      "discarded_segment_count": 2,
       "engine_version": "1.9",
       "level0_candidate_count": 34,
       "max_shard_key_count": 1707,
@@ -26,9 +26,10 @@
   "expected_base_digest": "792def0fe1c85ec9f85417a72203497e51b11a6385fc24a38bc10ff2b6fa36e1",
   "expected_base_row_count": 172391,
   "expected_discarded": [
-    "seg-0089"
+    "seg-0089",
+    "seg-0093"
   ],
-  "expected_manifest_digest": "0e05174471e0c9e4c95814d830a8a67bfa3d5ad794abc8f9bef95a846c93e597",
+  "expected_manifest_digest": "b534a4859bc078829e72a4ec2d4755924ecf0bb3ab6b62957d2838c6b35d76a3",
   "primary": {
     "plan_digest": "f80fe8eaf267b2321d9c6f9f233add696028c32b03833ffc97f17b82bac9de55",
     "shard_digest": "a2bfa011559f582582a914e28559c396687963bbce02ce88943b2cb113e838e1",
@@ -36,7 +37,7 @@
       "base_key_count": 172391,
       "base_value_bytes": 254355995,
       "deepest_version_count": 15,
-      "discarded_segment_count": 1,
+      "discarded_segment_count": 2,
       "engine_version": "1.9",
       "level0_candidate_count": 34,
       "max_shard_key_count": 2584,
@@ -53,5 +54,5 @@
     }
   },
   "release_notes_digest": "3d72bee5df6fbfb280dbdb1bc4cc2d5099c4e06dfd94347105926c651099728c",
-  "segment_tree_digest": "1c6425acebbcd6b3644b3e0fd015107bd3d33a2205003dc54bf1480f22367d5d"
+  "segment_tree_digest": "d22ff67d89cd513f5868c913b72c2bba2e4181efb8ae189b0b8d477d3e0557c1"
 }
