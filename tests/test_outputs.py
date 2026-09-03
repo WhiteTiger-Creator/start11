@@ -1003,7 +1003,10 @@ def test_output_dir_holds_exactly_the_three_contracted_files():
         sys.executable, str(WORKFLOW_PATH),
          "--output-dir", str(target)],
         WORK_DIR)
-    assert completed.returncode == 0, completed.stderr[-2000:]
+    # the exit code is a precondition; the verdict is the directory listing below
+    assert completed.returncode == 0, (
+        f"the run exited {completed.returncode}\n"
+        f"stdout: {completed.stdout[-2000:]}\nstderr: {completed.stderr[-2000:]}")
     names = sorted(q.name for q in target.iterdir())
     assert names == ["compaction_plan.jsonl", "shard_index.json", "summary.json"], names
 
@@ -1244,6 +1247,13 @@ def test_the_shard_floor_and_the_plan_level_are_read_from_the_policy():
         assert chosen <= available, (
             f"the plan names segments outside level {other}, so plan_level was ignored")
         assert _digest(plan) != FIXTURE["primary"]["plan_digest"]
+        # the contract fixes level0_candidate_count to the level-0 entries the
+        # manifest offered, counted before the budgets take any. Every other run
+        # here plans over level 0, where reporting the planned level's count and
+        # reporting level 0's are the same number, so nothing separated the two.
+        assert summary["level0_candidate_count"] == len(manifest["levels"]["0"]), (
+            "level0_candidate_count followed plan_level off level 0, though the "
+            "contract counts the level-0 entries whatever the plan is drawn from")
     finally:
         POLICY_PATH.write_text(original, encoding="utf-8")
 

@@ -234,7 +234,9 @@ def main() -> int:
         "base_key_count": len(rows),
         "base_value_bytes": sum(int(row["value_bytes"]) for row in rows),
         "discarded_segment_count": len(manifest["discarded_segments"]),
-        "level0_candidate_count": plan["candidate_count"],
+        # the contract names this the level-0 entries the manifest offered, counted
+        # before the budgets take any: it stays level 0 even where plan_level does not
+        "level0_candidate_count": len(manifest["levels"].get("0", [])),
         "shard_count": len(shards),
         "max_shard_value_bytes": max(s["value_bytes"] for s in shards),
         "min_shard_value_bytes": min(s["value_bytes"] for s in shards),

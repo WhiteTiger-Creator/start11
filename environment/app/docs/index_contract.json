@@ -100,7 +100,7 @@
       "schema_version_value": "segment-index-v1",
       "field_notes": {
         "level0_candidate_count": "how many level-0 segments the repaired manifest offered the planner, counted before the budgets take any of them: every entry the manifest carries at level 0, admitted or already linked",
-        "plan_eliminated_overlap": "the total overlap score of the segments the plan merges, being the sum of each chosen segment's own score under the 1.9 rule",
+        "plan_eliminated_overlap": "the total overlap score of the segments the plan merges, being the sum of each chosen segment's own score under the rule the deployed release defines",
         "plan_charged_mib": "the plan's charged size, the sum of its segments' charged mebibytes",
         "plan_charged_records": "the plan's charged records, the sum of its segments' charged thousands",
         "plan_budget_mib": "the byte budget the plan was held to, read from the policy",
