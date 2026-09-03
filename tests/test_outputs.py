@@ -521,11 +521,13 @@ def test_a_segment_whose_count_agrees_but_whose_checksum_does_not_is_discarded()
     checksum was graded identical to one that did both. seg-0093 carries a body
     whose length matches its trailer exactly and a checksum that does not.
     """
+    raw = (PENDING_DIR / "seg-0093.jsonl").read_text(encoding="utf-8")
+    assert raw.endswith("\n"), "seg-0093 has no trailing newline"
     body, trailer = [], None
-    for line in (PENDING_DIR / "seg-0093.jsonl").read_text(
-            encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
+    # every line is parsed as it stands: a segment file carries one record per
+    # line and nothing else, so a blank line is a fault to report, not to skip
+    for number, line in enumerate(raw.split("\n")[:-1], start=1):
+        assert line.strip(), f"seg-0093 line {number} is blank"
         record = json.loads(line)
         if record.get("trailer"):
             trailer = record
@@ -1112,7 +1114,10 @@ def test_cli_defaults_match_an_explicit_run(primary_outputs):
         ],
         WORK_DIR,
     )
-    assert completed.returncode == 0, completed.stderr[-2000:]
+    # the exit code is a precondition; the verdict is the three artifacts below
+    assert completed.returncode == 0, (
+        f"the run exited {completed.returncode}\n"
+        f"stdout: {completed.stdout[-2000:]}\nstderr: {completed.stderr[-2000:]}")
     assert _load_json(default_dir / "summary.json") == explicit_summary
     assert _digest(_load_json(default_dir / "shard_index.json")) == _digest(explicit_shards)
     assert _digest(_load_jsonl(default_dir / "compaction_plan.jsonl")) == _digest(explicit_plan)
