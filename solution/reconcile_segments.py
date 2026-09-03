@@ -19,18 +19,20 @@ MAX_KEY_BYTES = 64  # v1.4
 
 
 def read_segment(path: Path) -> tuple[list[dict], dict | None]:
-    """Split a segment file into its body records and its trailer, if any."""
-    body: list[dict] = []
-    trailer: dict | None = None
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        record = json.loads(line)
-        if record.get("trailer"):
-            trailer = record
-            continue
-        body.append(record)
-    return body, trailer
+    """Split a segment file into its body records and its trailer, if any.
+
+    v1.3 puts the trailer on the LAST line of the file, so only the last line is
+    considered for it. A trailer-shaped record anywhere earlier is body content:
+    it stays in the body, where it changes the record count and the checksum, and
+    v1.7's all-or-nothing admission then discards the segment -- which is the
+    right outcome for a file whose trailer is not where the format puts it.
+    """
+    records = [json.loads(line)
+               for line in path.read_text(encoding="utf-8").splitlines()
+               if line.strip()]
+    if records and records[-1].get("trailer"):
+        return records[:-1], records[-1]
+    return records, None
 
 
 def body_checksum(body: list[dict]) -> str:

@@ -53,7 +53,13 @@ def shard_boundaries(rows: list[dict], shard_count: int, min_keys: int = 1) -> l
         if shard == shard_count:
             index = len(rows)
         else:
-            while index < len(rows) and running < target:
+            # `or index == start` keeps the docstring's promise when the target
+            # is already met before the window has taken anything: a shard closes
+            # AT a key, so it always contains one. Without it, a base whose stored
+            # bytes total zero gives every shard a target of zero and no window
+            # ever closes. On a base with positive bytes this changes nothing,
+            # since the previous shard closed only after passing its own target.
+            while index < len(rows) and (running < target or index == start):
                 running += int(rows[index]["value_bytes"])
                 index += 1
         if index - start < max(1, min_keys):

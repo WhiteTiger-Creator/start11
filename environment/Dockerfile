@@ -29,7 +29,7 @@ RUN set -eu; \
 
 # /app/data ships exactly as the interrupted compactor left it: a base carrying
 # only the cold level it had finished, a repaired manifest that predates the
-# nine segments sitting unlinked under /app/data/pending, and the segment files
+# ten segments sitting unlinked under /app/data/pending, and the segment files
 # themselves.
 COPY app/ /app/
 RUN cp /app/workflow/rebuild_index.py /app/workflow/.rebuild_index.original \
