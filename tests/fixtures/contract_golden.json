@@ -57,6 +57,14 @@
     },
     "summary": {
       "container": "object",
+      "field_notes": {
+        "level0_candidate_count": "how many level-0 segments the repaired manifest offered the planner, counted before the budgets take any of them: every entry the manifest carries at level 0, admitted or already linked",
+        "plan_budget_mib": "the byte budget the plan was held to, read from the policy",
+        "plan_charged_mib": "the plan's charged size, the sum of its segments' charged mebibytes",
+        "plan_charged_records": "the plan's charged records, the sum of its segments' charged thousands",
+        "plan_eliminated_overlap": "the total overlap score of the segments the plan merges, being the sum of each chosen segment's own score under the rule the deployed release defines",
+        "plan_record_budget": "the record budget the plan was held to, read from the policy; it is the figure the policy states, not the charge the plan happened to spend"
+      },
       "field_types": {
         "base_key_count": "integer",
         "base_value_bytes": "integer",
@@ -97,19 +105,22 @@
         "plan_budget_mib",
         "plan_record_budget"
       ],
-      "schema_version_value": "segment-index-v1",
-      "field_notes": {
-        "level0_candidate_count": "how many level-0 segments the repaired manifest offered the planner, counted before the budgets take any of them: every entry the manifest carries at level 0, admitted or already linked",
-        "plan_eliminated_overlap": "the total overlap score of the segments the plan merges, being the sum of each chosen segment's own score under the rule the deployed release defines",
-        "plan_charged_mib": "the plan's charged size, the sum of its segments' charged mebibytes",
-        "plan_charged_records": "the plan's charged records, the sum of its segments' charged thousands",
-        "plan_budget_mib": "the byte budget the plan was held to, read from the policy",
-        "plan_record_budget": "the record budget the plan was held to, read from the policy; it is the figure the policy states, not the charge the plan happened to spend"
-      }
+      "schema_version_value": "segment-index-v1"
     }
+  },
+  "policy_fields": {
+    "merge_budget_mib": "the plan's stored-byte budget, charged in whole mebibytes",
+    "merge_record_budget": "the plan's record budget, charged in whole units of 1000 records",
+    "min_shard_keys": "the fewest keys a shard may carry: a window falling below it is not closed and its keys carry into the next shard instead, and keys left at the end that cannot make a shard of their own join the last shard emitted, so every key sits in exactly one shard whatever the floor is set to and a floor of one only drops empty windows",
+    "plan_level": "the level the compaction plan selects from",
+    "shard_count": "how many shards the base is split into"
   },
   "reconciled_inputs": {
     "compacted_base": {
+      "constraints": [
+        "a conforming base carries at least one record: an empty base is not a base this engine indexes, and a run handed one may fail rather than invent a shard, a boundary or a maximum over no keys",
+        "keys are unique within a base"
+      ],
       "container": "jsonl",
       "element_fields": [
         "key",
@@ -156,12 +167,5 @@
       "sort": "each level list ascending by segment id; discarded_segments ascending"
     }
   },
-  "runtime_budget_seconds": 120,
-  "policy_fields": {
-    "shard_count": "how many shards the base is split into",
-    "min_shard_keys": "the fewest keys a shard may carry: a window falling below it is not closed and its keys carry into the next shard instead, and keys left at the end that cannot make a shard of their own join the last shard emitted, so every key sits in exactly one shard whatever the floor is set to and a floor of one only drops empty windows",
-    "plan_level": "the level the compaction plan selects from",
-    "merge_budget_mib": "the plan's stored-byte budget, charged in whole mebibytes",
-    "merge_record_budget": "the plan's record budget, charged in whole units of 1000 records"
-  }
+  "runtime_budget_seconds": 120
 }

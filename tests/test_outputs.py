@@ -1038,16 +1038,56 @@ def test_artifacts_use_the_serialisation_the_contract_states():
             f"plan line {number} is not the compact, key-sorted serialisation of its content")
 
 
+_DYNAMIC_LOADERS = {"__import__", "import_module", "load_module", "exec_module",
+                    "find_module", "module_from_spec", "spec_from_file_location",
+                    "SourceFileLoader", "ExtensionFileLoader", "eval", "exec"}
+
+
 def _imported_roots(source: str) -> set:
-    """Top-level module names the source imports, read from the parse tree."""
+    """Top-level module names the source imports, read from the parse tree.
+
+    Static import nodes are only half of it. A submission can reach an installed
+    package through __import__("pandas") or importlib.import_module(name) and a
+    scan that walks Import and ImportFrom alone sees nothing, so the standard
+    library rule was enforced against the honest spelling only. Every name a
+    dynamic loader is handed as a literal is taken as an import too.
+    """
     roots = set()
-    for node in ast.walk(ast.parse(source)):
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 roots.add(alias.name.split(".")[0])
         elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
             roots.add(node.module.split(".")[0])
+        elif isinstance(node, ast.Call):
+            target = node.func
+            name = (target.id if isinstance(target, ast.Name)
+                    else target.attr if isinstance(target, ast.Attribute) else None)
+            if name not in _DYNAMIC_LOADERS:
+                continue
+            for arg in list(node.args) + [kw.value for kw in node.keywords]:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    roots.add(arg.value.split(".")[0])
     return roots
+
+
+def _dynamic_loads_with_a_computed_name(source: str) -> list:
+    """Dynamic loads whose argument is not a literal, which no scan can follow."""
+    out = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        target = node.func
+        name = (target.id if isinstance(target, ast.Name)
+                else target.attr if isinstance(target, ast.Attribute) else None)
+        if name not in _DYNAMIC_LOADERS:
+            continue
+        args = list(node.args) + [kw.value for kw in node.keywords]
+        if not args or not all(
+                isinstance(a, ast.Constant) and isinstance(a.value, str) for a in args):
+            out.append((name, node.lineno))
+    return out
 
 
 def test_rebuild_imports_only_the_standard_library():
@@ -1071,6 +1111,34 @@ def test_rebuild_imports_only_the_standard_library():
                    if name not in sys.stdlib_module_names and name not in local}
         assert not outside, (
             f"{source.name} imports outside the standard library: {sorted(outside)}")
+        # A dynamic load whose module name is computed cannot be resolved here
+        # at all, so it is refused outright rather than waved through: the rule
+        # is standard library only, and a name assembled at run time is a way of
+        # not saying which library.
+        computed = _dynamic_loads_with_a_computed_name(
+            source.read_text(encoding="utf-8"))
+        assert not computed, (
+            f"{source.name} loads a module through a computed name, which no "
+            f"import check can follow: {computed}")
+
+
+def test_the_import_check_reads_dynamic_loads_as_well_as_static_ones():
+    """The scan above is only worth running if it cannot be spelled around.
+
+    Four ways to reach an installed package -- the plain import, the from-import,
+    __import__ and importlib.import_module -- must all be seen, and a module the
+    submission ships beside the rebuild must not be mistaken for one of them.
+    """
+    assert _imported_roots("import pandas") == {"pandas"}
+    assert _imported_roots("from pandas import read_csv") == {"pandas"}
+    assert _imported_roots("__import__('pandas')") == {"pandas"}
+    assert _imported_roots(
+        "import importlib\nimportlib.import_module('pandas.io')") == {
+        "importlib", "pandas"}
+    assert _imported_roots("import json\nimport collections") == {
+        "json", "collections"}
+    assert _dynamic_loads_with_a_computed_name("__import__(name)")
+    assert not _dynamic_loads_with_a_computed_name("__import__('json')")
 
 
 def test_rebuild_is_idempotent():
@@ -1159,6 +1227,18 @@ _TIES = {
          ("seg-t311", "m", "m", 8, 8), ("seg-t312", "o", "o", 8, 8),
          ("seg-t313", "q", "q", 8, 8)],
         5, 5000, ["seg-t310"],
+    ),
+    # then smallest charged record count: two single segments alike on score and
+    # on charged size, differing only in records, and the cheaper one sorts
+    # second, so the id link would take the dearer
+    "smallest_charged_records": (
+        [("seg-t400", "a", "f", 4, 7),
+         ("seg-t401", "a", "a", 8, 8), ("seg-t402", "c", "c", 8, 8),
+         ("seg-t403", "e", "e", 8, 8),
+         ("seg-t410", "m", "r", 4, 5),
+         ("seg-t411", "m", "m", 8, 8), ("seg-t412", "o", "o", 8, 8),
+         ("seg-t413", "q", "q", 8, 8)],
+        4, 7000, ["seg-t410"],
     ),
     # and last the id list: six pairs of equal score, count and charge
     "smallest_id_list": (
@@ -1294,12 +1374,27 @@ def test_run_finishes_inside_the_contract_budget(primary_outputs):
 # --------------------------------------------------------------------------
 # The frozen snapshot
 # --------------------------------------------------------------------------
-def test_submitted_program_runs_unprivileged_and_cannot_reach_the_reward():
-    """The graded program runs as nobody, and the reward channel is out of reach.
+# Everything the verifier keeps to itself: the reward channel, the sealed
+# expectations, the held-out corpus and the suite that reads them. The probe
+# below has to be refused every one of them.
+PROBED_VERIFIER_ASSETS = [
+    Path("/logs/verifier/reward.txt"),
+    EXPECTED_FIXTURE,
+    GOLDEN_CONTRACT_PATH,
+    ALT_INPUT,
+    Path("/tests/fixtures/shipped_base.json"),
+    Path("/tests/test_outputs.py"),
+    Path("/tests/fixtures"),
+]
 
-    The probe reports its own uid, then whether reading and writing the reward
-    file both fail. /logs/verifier is root-only, so a graded run can neither
-    learn its score nor set it.
+
+def test_submitted_program_runs_unprivileged_and_cannot_reach_verifier_assets():
+    """The graded program runs as nobody and reaches nothing the verifier holds.
+
+    Writing the reward was the only thing this ever probed, so it proved the
+    score could not be forged and nothing about whether the answers could be
+    read. A run that cannot write the reward but can read the sealed fixtures,
+    the held-out corpus or this file has no need to solve anything.
     """
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(WORK_DIR, 0o1777)
@@ -1310,15 +1405,16 @@ def test_submitted_program_runs_unprivileged_and_cannot_reach_the_reward():
         "import os\n"
         "print(os.getuid())\n"
         "try:\n"
-        "    open('/logs/verifier/reward.txt').read()\n"
-        "    print('readable')\n"
-        "except OSError:\n"
-        "    print('unreadable')\n"
-        "try:\n"
         "    open('/logs/verifier/reward.txt', 'w').write('1')\n"
         "    print('writable')\n"
         "except OSError:\n"
-        "    print('unwritable')\n",
+        "    print('unwritable')\n"
+        "for path in " + repr([str(q) for q in PROBED_VERIFIER_ASSETS]) + ":\n"
+        "    try:\n"
+        "        open(path, 'rb').read(1)\n"
+        "        print('read ' + path)\n"
+        "    except OSError:\n"
+        "        print('denied ' + path)\n",
         encoding="utf-8",
     )
     os.chmod(probe, 0o644)
@@ -1330,7 +1426,17 @@ def test_submitted_program_runs_unprivileged_and_cannot_reach_the_reward():
         WORK_DIR,
     )
     assert result.returncode == 0, result.stderr[-2000:]
-    assert result.stdout.split() == [str(CANDIDATE_UID), "unreadable", "unwritable"]
+    # exact line count, no blank-line filtering: a probe whose output is trimmed
+    # into shape can be made to look like a pass it did not earn
+    lines = result.stdout.split("\n")
+    assert lines and lines[-1] == "", "the probe's output does not end in a newline"
+    lines = lines[:-1]
+    assert len(lines) == 2 + len(PROBED_VERIFIER_ASSETS), lines
+    assert lines[0] == str(CANDIDATE_UID), lines[0]
+    assert lines[1] == "unwritable", lines[1]
+    for path, line in zip(PROBED_VERIFIER_ASSETS, lines[2:]):
+        assert line == f"denied {path}", (
+            f"code run as the graded program reached {path}")
 
 
 def test_original_snapshot_preserved():
@@ -1376,6 +1482,120 @@ def test_shipped_contract_matches_the_golden_copy():
     from the verifier's own image; this proves the agent's copy still agrees with
     it, so the contract cannot be trimmed to weaken a schema check.
     """
-    shipped = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
-    assert shipped == json.loads(GOLDEN_CONTRACT_PATH.read_text(encoding="utf-8"))
+    # instruction.md asks for the contract byte for byte, so the bytes are what
+    # is compared: parsing both sides first accepted a re-indent or a key
+    # reordering, which is not the file coming back unchanged.
+    assert CONTRACT_PATH.read_bytes() == GOLDEN_CONTRACT_PATH.read_bytes(), (
+        "the shipped contract differs from the golden copy; it must come back "
+        "byte for byte, not merely parse to the same document")
+    # kept as a second, narrower reading of the same requirement
+    assert json.loads(CONTRACT_PATH.read_text(encoding="utf-8")) == json.loads(
+        GOLDEN_CONTRACT_PATH.read_text(encoding="utf-8"))
 
+
+def _utf16_key(value: str) -> bytes:
+    """The order the 1.5 client library reported: UTF-16 code units."""
+    return value.encode("utf-16-be", "surrogatepass")
+
+
+def test_a_pending_segment_with_no_trailer_at_all_is_discarded():
+    """v1.7 names three admission conditions and only two were ever reached.
+
+    Every pending segment used to carry a trailer, so an engine that checked the
+    record count and the checksum but never asked whether a trailer was there
+    graded identical to one that did. seg-0094 is a body and nothing else.
+    """
+    raw = (PENDING_DIR / "seg-0094.jsonl").read_text(encoding="utf-8")
+    lines = [line for line in raw.split("\n")[:-1]]
+    assert lines, "seg-0094 is empty"
+    for number, line in enumerate(lines, start=1):
+        record = json.loads(line)
+        assert not record.get("trailer"), f"seg-0094 line {number} is a trailer"
+    repaired = _load_json(REPAIRED_PATH)
+    assert "seg-0094" in repaired["discarded_segments"], (
+        "a pending segment carrying no trailer was admitted")
+    assert "seg-0094" not in {e["id"] for e in repaired["levels"]["0"]}
+    keys = {row["key"] for row in _load_jsonl(BASE_PATH)}
+    for record in (json.loads(line) for line in lines):
+        assert record["k"] not in keys, (
+            f"{record['k']} reached the base from a segment with no trailer")
+
+
+def test_an_inadmissible_key_is_dropped_and_its_segment_still_admitted():
+    """v1.4 drops three kinds of key at merge time, and none was in the corpus.
+
+    The shipped bodies carried no empty key, none over 64 bytes encoded and none
+    with a character below U+0020, so an engine that never validated a key at all
+    produced the same base. seg-0095 carries one of each beside ordinary keys,
+    and v1.4 is explicit that this is not an error: the records go, the segment
+    stays.
+    """
+    body = [json.loads(line)
+            for line in (PENDING_DIR / "seg-0095.jsonl").read_text(
+                encoding="utf-8").split("\n")[:-1]]
+    trailer = body.pop()
+    assert trailer.get("trailer"), "seg-0095 has no trailer"
+    inadmissible = [r["k"] for r in body
+                    if r["k"] == "" or len(r["k"].encode("utf-8")) > 64
+                    or any(ord(ch) < 0x20 for ch in r["k"])]
+    assert len(inadmissible) >= 3, inadmissible
+    assert "" in inadmissible
+    assert any(len(k.encode("utf-8")) > 64 for k in inadmissible)
+    assert any(any(ord(ch) < 0x20 for ch in k) for k in inadmissible)
+
+    repaired = _load_json(REPAIRED_PATH)
+    assert "seg-0095" in {e["id"] for e in repaired["levels"]["0"]}, (
+        "the segment was discarded, though v1.4 says an inadmissible key is not "
+        "an error and takes only itself out")
+    keys = {row["key"] for row in _load_jsonl(BASE_PATH)}
+    for key in inadmissible:
+        assert key not in keys, f"the inadmissible key {key!r} reached the base"
+    admissible = [r["k"] for r in body if r["k"] not in inadmissible]
+    for key in admissible:
+        assert key in keys, f"the admissible key {key!r} was dropped with the rest"
+
+
+def test_the_base_follows_byte_order_where_the_two_collations_disagree():
+    """v1.6 replaced the client library's UTF-16 order with raw UTF-8 byte order.
+
+    The two agree across the whole basic multilingual plane, and every key the
+    corpus used to carry was ASCII, so the rule could not be told from its
+    predecessor anywhere in the graded data. seg-0095 carries a pair that
+    reverses between them: U+FF3A encodes as EF BC BA and U+10000 as F0 90 80 80,
+    so byte order puts the first ahead while UTF-16 puts the second ahead through
+    its D800 lead surrogate.
+    """
+    keys = [row["key"] for row in _load_jsonl(BASE_PATH)]
+    disagreeing = [(a, b) for a, b in zip(keys, keys[1:])
+                   if (_byte_key(a) < _byte_key(b)) != (_utf16_key(a) < _utf16_key(b))]
+    assert disagreeing, (
+        "no two neighbouring keys order differently under the two collations, so "
+        "this base cannot tell byte order from the UTF-16 order 1.6 withdrew")
+    assert keys == sorted(keys, key=_byte_key), (
+        "the base is not in byte order")
+    assert keys != sorted(keys, key=_utf16_key), (
+        "the base is also in UTF-16 order, so the two are not being separated")
+
+
+def test_the_merge_breaks_a_seq_tie_on_the_greatest_segment_id():
+    """v1.5's last link, which the shipped tree never put to work.
+
+    No two level-0 segments shared a sequence number, so an engine that stopped
+    at the level and the seq took the same winner as one that went on to the id.
+    seg-0200 and seg-0201 sit at level 0 on the same seq and both carry
+    dup:0000001; the greatest id wins it.
+    """
+    manifest = _load_json(MANIFEST_PATH)
+    level0 = manifest["levels"]["0"]
+    shared = [e for e in level0 if e["id"] in {"seg-0200", "seg-0201"}]
+    assert len(shared) == 2, "the crafted pair is not in the shipped manifest"
+    assert shared[0]["seq"] == shared[1]["seq"], "the pair does not share a seq"
+
+    rows = {row["key"]: row for row in _load_jsonl(BASE_PATH)}
+    assert "dup:0000001" in rows, "the contested key did not reach the base"
+    assert rows["dup:0000001"]["segment"] == "seg-0201", (
+        "the seq tie went to " + rows["dup:0000001"]["segment"] + ", not to the "
+        "lexicographically greatest segment id v1.5 names")
+    # both segments' own keys survive; only the contested one has a loser
+    assert rows["only:seg-0200"]["segment"] == "seg-0200"
+    assert rows["only:seg-0201"]["segment"] == "seg-0201"

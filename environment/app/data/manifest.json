@@ -236,6 +236,24 @@
         "min_key": "acct:0000260",
         "records": 1329,
         "seq": 1500945
+      },
+      {
+        "bytes": 1280,
+        "id": "seg-0200",
+        "level": 0,
+        "max_key": "only:seg-0200",
+        "min_key": "dup:0000001",
+        "records": 2,
+        "seq": 1400000
+      },
+      {
+        "bytes": 1408,
+        "id": "seg-0201",
+        "level": 0,
+        "max_key": "only:seg-0201",
+        "min_key": "dup:0000001",
+        "records": 2,
+        "seq": 1400000
       }
     ],
     "1": [
