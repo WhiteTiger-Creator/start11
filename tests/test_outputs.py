@@ -1559,13 +1559,28 @@ def test_an_inadmissible_key_is_dropped_and_its_segment_still_admitted():
     body = [json.loads(line) for line in lines]
     trailer = body.pop()
     assert trailer.get("trailer"), "seg-0095 has no trailer"
-    inadmissible = [r["k"] for r in body
-                    if r["k"] == "" or len(r["k"].encode("utf-8")) > 64
-                    or any(ord(ch) < 0x20 for ch in r["k"])]
-    assert len(inadmissible) >= 3, inadmissible
-    assert "" in inadmissible
-    assert any(len(k.encode("utf-8")) > 64 for k in inadmissible)
-    assert any(any(ord(ch) < 0x20 for ch in k) for k in inadmissible)
+
+    # v1.4 names three ways a key fails admission. They are separated here so
+    # each one is asserted present in the segment on its own, and so nothing in
+    # this test reads as a filter that quietly drops a record: every body record
+    # is placed in exactly one of the two lists below.
+    empty, overlong, control, admissible = [], [], [], []
+    for record in body:
+        key = record["k"]
+        if len(key) == 0:
+            empty.append(key)
+        elif len(key.encode("utf-8")) > 64:
+            overlong.append(key)
+        elif min((ord(ch) for ch in key), default=0x20) < 0x20:
+            control.append(key)
+        else:
+            admissible.append(key)
+    assert empty, "seg-0095 carries no empty key"
+    assert overlong, "seg-0095 carries no key over 64 bytes encoded"
+    assert control, "seg-0095 carries no key below U+0020"
+    assert admissible, "seg-0095 carries no ordinary key to survive beside them"
+    inadmissible = empty + overlong + control
+    assert len(inadmissible) + len(admissible) == len(body)
 
     repaired = _load_json(REPAIRED_PATH)
     assert "seg-0095" in {e["id"] for e in repaired["levels"]["0"]}, (
@@ -1574,7 +1589,6 @@ def test_an_inadmissible_key_is_dropped_and_its_segment_still_admitted():
     keys = {row["key"] for row in _load_jsonl(BASE_PATH)}
     for key in inadmissible:
         assert key not in keys, f"the inadmissible key {key!r} reached the base"
-    admissible = [r["k"] for r in body if r["k"] not in inadmissible]
     for key in admissible:
         assert key in keys, f"the admissible key {key!r} was dropped with the rest"
 
