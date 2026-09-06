@@ -473,7 +473,12 @@ def test_reconciled_base_matches_expected():
 
 
 def test_reconciled_base_carries_only_declared_fields():
-    """No extra bookkeeping may leak into the base rows."""
+    """No extra bookkeeping may leak into the base rows.
+
+    The sort here is over FIELD NAMES, comparing the set of keys a row carries
+    against the set the contract declares. A JSON object has no order to soften,
+    and the row's own serialisation is graded byte for byte elsewhere.
+    """
     for row in _load_jsonl(BASE_PATH)[:5000]:
         assert sorted(row) == sorted(BASE_FIELDS)
 
@@ -762,7 +767,11 @@ def test_summary_required_fields_and_types(primary_outputs):
 
 
 def test_shard_rows_carry_declared_fields_and_types(primary_outputs):
-    """Shard rows match the contract shape."""
+    """Shard rows match the contract shape.
+
+    As above, the sort is over field NAMES against the contract's declared set;
+    the rows' own order is asserted separately and is not softened here.
+    """
     _, _, shards, _ = primary_outputs
     for row in shards:
         assert sorted(row) == sorted(SHARD_FIELDS)
@@ -775,7 +784,12 @@ def test_shard_rows_carry_declared_fields_and_types(primary_outputs):
 
 
 def test_plan_rows_carry_declared_fields_and_are_sorted(primary_outputs):
-    """Plan rows match the contract shape and its stated order."""
+    """Plan rows match the contract shape and its stated order.
+
+    The first sort is over field NAMES. The second is the contract's own stated
+    order for the plan -- ascending by segment id -- so comparing against
+    sorted() is asserting the requirement rather than relaxing it.
+    """
     _, _, _, plan = primary_outputs
     for row in plan:
         assert sorted(row) == sorted(PLAN_FIELDS)
@@ -1506,9 +1520,15 @@ def test_a_pending_segment_with_no_trailer_at_all_is_discarded():
     graded identical to one that did. seg-0094 is a body and nothing else.
     """
     raw = (PENDING_DIR / "seg-0094.jsonl").read_text(encoding="utf-8")
-    lines = [line for line in raw.split("\n")[:-1]]
+    assert raw.endswith("\n") and not raw.endswith("\n\n"), (
+        "seg-0094 does not end in a single newline")
+    lines = raw.split("\n")[:-1]
     assert lines, "seg-0094 is empty"
+    # every line is taken as it stands: a segment file carries one record per
+    # line and nothing else, so a blank line is a fault to report rather than
+    # something to skip past
     for number, line in enumerate(lines, start=1):
+        assert line.strip(), f"seg-0094 line {number} is blank"
         record = json.loads(line)
         assert not record.get("trailer"), f"seg-0094 line {number} is a trailer"
     repaired = _load_json(REPAIRED_PATH)
@@ -1530,9 +1550,13 @@ def test_an_inadmissible_key_is_dropped_and_its_segment_still_admitted():
     and v1.4 is explicit that this is not an error: the records go, the segment
     stays.
     """
-    body = [json.loads(line)
-            for line in (PENDING_DIR / "seg-0095.jsonl").read_text(
-                encoding="utf-8").split("\n")[:-1]]
+    raw = (PENDING_DIR / "seg-0095.jsonl").read_text(encoding="utf-8")
+    assert raw.endswith("\n") and not raw.endswith("\n\n"), (
+        "seg-0095 does not end in a single newline")
+    lines = raw.split("\n")[:-1]
+    for number, line in enumerate(lines, start=1):
+        assert line.strip(), f"seg-0095 line {number} is blank"
+    body = [json.loads(line) for line in lines]
     trailer = body.pop()
     assert trailer.get("trailer"), "seg-0095 has no trailer"
     inadmissible = [r["k"] for r in body
