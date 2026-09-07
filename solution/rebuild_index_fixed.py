@@ -53,13 +53,17 @@ def shard_boundaries(rows: list[dict], shard_count: int, min_keys: int = 1) -> l
         if shard == shard_count:
             index = len(rows)
         else:
-            # `or index == start` keeps the docstring's promise when the target
-            # is already met before the window has taken anything: a shard closes
-            # AT a key, so it always contains one. Without it, a base whose stored
-            # bytes total zero gives every shard a target of zero and no window
-            # ever closes. On a base with positive bytes this changes nothing,
-            # since the previous shard closed only after passing its own target.
-            while index < len(rows) and (running < target or index == start):
+            # `or index == opened` keeps the docstring's promise when the target
+            # is already met before this shard has taken anything: a shard closes
+            # AT a key, so it always reaches one. The mark is where THIS shard
+            # began rather than where the last one closed, which matters once the
+            # floor starts carrying windows forward: a single huge first value
+            # can put the running total past every later target at once, and
+            # measuring from the last closed boundary would then take no further
+            # key at all and fold the whole base into one shard. It also covers a
+            # base whose stored bytes total zero, where every target is zero.
+            opened = index
+            while index < len(rows) and (running < target or index == opened):
                 running += int(rows[index]["value_bytes"])
                 index += 1
         if index - start < max(1, min_keys):
@@ -234,9 +238,9 @@ def main() -> int:
         "base_key_count": len(rows),
         "base_value_bytes": sum(int(row["value_bytes"]) for row in rows),
         "discarded_segment_count": len(manifest["discarded_segments"]),
-        # the contract names this the level-0 entries the manifest offered, counted
-        # before the budgets take any: it stays level 0 even where plan_level does not
-        "level0_candidate_count": len(manifest["levels"].get("0", [])),
+        # the candidates the planner chose from, counted before the budgets take
+        # any of them: the manifest's entries at the level plan_level names
+        "candidate_count": len(manifest["levels"].get(level, [])),
         "shard_count": len(shards),
         "max_shard_value_bytes": max(s["value_bytes"] for s in shards),
         "min_shard_value_bytes": min(s["value_bytes"] for s in shards),

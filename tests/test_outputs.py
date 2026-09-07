@@ -989,7 +989,7 @@ def test_plan_covers_level_zero_only(primary_outputs):
     for row in plan:
         assert row["segment"] in level_zero
         assert row["segment"] not in higher
-    assert summary["level0_candidate_count"] == len(level_zero)
+    assert summary["candidate_count"] == len(level_zero)
 
 
 # --------------------------------------------------------------------------
@@ -1025,6 +1025,13 @@ def test_output_dir_holds_exactly_the_three_contracted_files():
         f"stdout: {completed.stdout[-2000:]}\nstderr: {completed.stderr[-2000:]}")
     names = sorted(q.name for q in target.iterdir())
     assert names == ["compaction_plan.jsonl", "shard_index.json", "summary.json"], names
+    # and the three are this run's real artifacts rather than three empty files
+    # that happen to carry the contracted names
+    assert _load_json(target / "summary.json") == FIXTURE["primary"]["summary"]
+    assert _digest(_load_json(target / "shard_index.json")) == (
+        FIXTURE["primary"]["shard_digest"])
+    assert _digest(_load_jsonl(target / "compaction_plan.jsonl")) == (
+        FIXTURE["primary"]["plan_digest"])
 
 
 def test_artifacts_use_the_serialisation_the_contract_states():
@@ -1209,12 +1216,20 @@ _MIB = 1048576
 
 
 def _tie_world(segments: list[tuple]) -> list[dict]:
-    """Level-0 entries in the manifest's own shape, from a compact description."""
-    return [
-        {"id": seg_id, "min_key": lo, "max_key": hi,
-         "bytes": mib * _MIB, "records": krecs * 1000}
-        for seg_id, lo, hi, mib, krecs in segments
-    ]
+    """Level-0 entries in the manifest's own shape, from a compact description.
+
+    Every field the contract's level_entry_fields names is written, `level` and
+    `seq` included. Neither reaches the planner, but an engine that validates
+    the manifest it is handed against the contract is entitled to refuse a
+    level entry missing them, and refusing a crafted world is not the failure
+    this test is looking for.
+    """
+    entries = []
+    for offset, (seg_id, lo, hi, mib, krecs) in enumerate(segments):
+        entries.append({"id": seg_id, "level": 0, "seq": 900 + offset,
+                        "min_key": lo, "max_key": hi,
+                        "bytes": mib * _MIB, "records": krecs * 1000})
+    return entries
 
 
 # Three candidate sets where the optimal score is reached more than once. On the
@@ -1346,15 +1361,60 @@ def test_the_shard_floor_and_the_plan_level_are_read_from_the_policy():
         assert chosen <= available, (
             f"the plan names segments outside level {other}, so plan_level was ignored")
         assert _digest(plan) != FIXTURE["primary"]["plan_digest"]
-        # the contract fixes level0_candidate_count to the level-0 entries the
-        # manifest offered, counted before the budgets take any. Every other run
-        # here plans over level 0, where reporting the planned level's count and
-        # reporting level 0's are the same number, so nothing separated the two.
-        assert summary["level0_candidate_count"] == len(manifest["levels"]["0"]), (
-            "level0_candidate_count followed plan_level off level 0, though the "
-            "contract counts the level-0 entries whatever the plan is drawn from")
+        # candidate_count is the set the planner chose from, so it follows
+        # plan_level. Every other run here plans over level 0, where the planned
+        # level's count and level 0's are the same number, so nothing separated
+        # the two.
+        assert summary["candidate_count"] == len(manifest["levels"][other]), (
+            f"candidate_count stayed on level 0 with plan_level at {other}, "
+            "though the contract counts the entries at the level plan_level names")
     finally:
         POLICY_PATH.write_text(original, encoding="utf-8")
+
+
+def test_the_shard_floor_holds_where_one_value_dominates_the_base():
+    """The floor's hard case: a first value that meets every later target at once.
+
+    Six keys, the first carrying a hundred bytes against one byte each for the
+    rest, split four ways under a floor of two. Shard one closes on the first
+    key alone and falls below the floor, so its key carries forward -- and every
+    later target is already met by those hundred bytes. A window that measures
+    what it has taken from the last CLOSED boundary then takes no further key at
+    all and folds the whole base into a single shard, which is a shard split in
+    name only. Each shard closes at a key, so shard two reaches the second key,
+    the carried window makes the floor and closes, and the base is really split.
+    """
+    original_policy = POLICY_PATH.read_text(encoding="utf-8")
+    rows = [{"key": f"kk-{i:04d}", "value_bytes": 100 if i == 0 else 1,
+             "version_count": 1, "level": 0, "segment": "seg-0000", "seq": 1 + i}
+            for i in range(6)]
+    staged = WORK_DIR / "dominant_base.jsonl"
+    staged.write_text("".join(
+        json.dumps(row, separators=(",", ":"), sort_keys=True) + "\n" for row in rows),
+        encoding="utf-8")
+    os.chmod(staged, 0o644)
+    try:
+        policy = json.loads(original_policy)
+        policy["shard_count"] = 4
+        policy["min_shard_keys"] = 2
+        POLICY_PATH.write_text(
+            json.dumps(policy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        _, summary, shards, _ = _run_pipeline(
+            input_path=staged, output_dir=WORK_DIR / "dominant")
+    finally:
+        POLICY_PATH.write_text(original_policy, encoding="utf-8")
+
+    assert len(shards) > 1, (
+        "the whole base landed in one shard: a window that cannot make the floor "
+        "carried forward and then took nothing more")
+    assert all(row["key_count"] >= 2 for row in shards), (
+        f"a shard fell below the floor: {[row['key_count'] for row in shards]}")
+    assert sum(row["key_count"] for row in shards) == len(rows)
+    assert sum(row["value_bytes"] for row in shards) == 105
+    assert [row["shard"] for row in shards] == list(range(len(shards)))
+    assert shards[0]["first_key"] == rows[0]["key"]
+    assert shards[-1]["last_key"] == rows[-1]["key"]
+    assert summary["shard_count"] == len(shards)
 
 
 def test_policy_path_actually_influences_the_output():

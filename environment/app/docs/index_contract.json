@@ -58,7 +58,7 @@
     "summary": {
       "container": "object",
       "field_notes": {
-        "level0_candidate_count": "how many level-0 segments the repaired manifest offered the planner, counted before the budgets take any of them: every entry the manifest carries at level 0, admitted or already linked",
+        "candidate_count": "how many segments the repaired manifest offered the planner, counted before the budgets take any of them: every entry the manifest carries at the level the policy's plan_level names, admitted or already linked. It follows plan_level rather than standing at any fixed level",
         "plan_budget_mib": "the byte budget the plan was held to, read from the policy",
         "plan_charged_mib": "the plan's charged size, the sum of its segments' charged mebibytes",
         "plan_charged_records": "the plan's charged records, the sum of its segments' charged thousands",
@@ -71,7 +71,7 @@
         "deepest_version_count": "integer",
         "discarded_segment_count": "integer",
         "engine_version": "string",
-        "level0_candidate_count": "integer",
+        "candidate_count": "integer",
         "max_shard_key_count": "integer",
         "max_shard_value_bytes": "integer",
         "min_shard_value_bytes": "integer",
@@ -92,7 +92,7 @@
         "base_key_count",
         "base_value_bytes",
         "discarded_segment_count",
-        "level0_candidate_count",
+        "candidate_count",
         "shard_count",
         "max_shard_value_bytes",
         "min_shard_value_bytes",

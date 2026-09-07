@@ -130,7 +130,7 @@ def main() -> int:
         "base_key_count": len(rows),
         "base_value_bytes": sum(int(row["value_bytes"]) for row in rows),
         "discarded_segment_count": len(manifest.get("discarded_segments", [])),
-        "level0_candidate_count": plan["candidate_count"],
+        "candidate_count": plan["candidate_count"],
         "shard_count": len(shards),
         "max_shard_value_bytes": max(s["value_bytes"] for s in shards),
         "min_shard_value_bytes": min(s["value_bytes"] for s in shards),

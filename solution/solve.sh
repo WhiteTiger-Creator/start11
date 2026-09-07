@@ -4,11 +4,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- Step 1: reconcile the interrupted compaction ---------------------------
-# The compactor died after merging the cold level, leaving nine segments on disk
-# that the manifest never learned about and one of them torn. Rebuild
-# /app/data/compacted_base.jsonl and /app/data/manifest_repaired.json under the
-# rules the deployed release defines; the planner and the shard split are both
-# wrong until this is done.
+# The compactor died after merging the cold level, leaving twelve segments on
+# disk that the manifest never learned about, three of which the admission check
+# throws out. Rebuild /app/data/compacted_base.jsonl and
+# /app/data/manifest_repaired.json under the rules the deployed release defines;
+# the planner and the shard split are both wrong until this is done.
 
 python3 "${SCRIPT_DIR}/reconcile_segments.py"
 
