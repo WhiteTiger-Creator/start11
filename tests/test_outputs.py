@@ -467,6 +467,52 @@ def test_reconciled_base_exists_and_is_jsonl():
     assert all(isinstance(row, dict) for row in rows)
 
 
+def test_the_reconciled_artifacts_are_serialised_as_the_contract_states():
+    """Byte-level, because the digests above are format-insensitive.
+
+    _digest hashes the decoded documents, so a reconciler that wrote every base
+    row as json.dumps(row, sort_keys=True) -- which leaves a space after each
+    separator -- or that wrote the manifest at a different indent, or without a
+    trailing newline, matched every content check while breaking the
+    serialisation the contract names for both files. What the run produced is
+    re-serialised from its own decoded content and compared, so nothing but the
+    layout is graded.
+
+    The comparison is made on digests and the report is built by hand: the base
+    runs to millions of bytes, and letting an assert compare the two blobs
+    directly would have pytest build a character diff of the pair and take the
+    verifier down with it.
+    """
+    spec = CONTRACT["reconciled_inputs"]
+
+    def first_difference(actual: str, expected: str) -> str:
+        for number, (got, want) in enumerate(
+                zip(actual.split("\n"), expected.split("\n")), start=1):
+            if got != want:
+                return f"line {number} reads {got[:120]!r}, not {want[:120]!r}"
+        return (f"the files agree line for line but differ in length: "
+                f"{len(actual)} bytes against {len(expected)}")
+
+    rows = _load_jsonl(BASE_PATH)
+    written = BASE_PATH.read_text(encoding="utf-8")
+    expected = "".join(
+        json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in rows)
+    if written != expected:
+        raise AssertionError(
+            "the compacted base is not the "
+            f"{spec['compacted_base']['serialisation']} the contract names: "
+            + first_difference(written, expected))
+
+    manifest = _load_json(REPAIRED_PATH)
+    written = REPAIRED_PATH.read_text(encoding="utf-8")
+    expected = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    if written != expected:
+        raise AssertionError(
+            "the repaired manifest is not the "
+            f"{spec['manifest_repaired']['serialisation']} the contract names: "
+            + first_difference(written, expected))
+
+
 def test_reconciled_base_matches_expected():
     """The rebuilt base must equal the reconciliation the release defines."""
     assert _digest(_load_jsonl(BASE_PATH)) == FIXTURE["expected_base_digest"]
@@ -1026,6 +1072,13 @@ def test_output_dir_holds_exactly_the_three_contracted_files():
     names = sorted(q.name for q in target.iterdir())
     assert names == ["compaction_plan.jsonl", "shard_index.json", "summary.json"], names
     # and the three are this run's real artifacts rather than three empty files
+    # carrying the contracted names
+    assert _load_json(target / "summary.json") == FIXTURE["primary"]["summary"]
+    assert _digest(_load_json(target / "shard_index.json")) == \
+        FIXTURE["primary"]["shard_digest"]
+    assert _digest(_load_jsonl(target / "compaction_plan.jsonl")) == \
+        FIXTURE["primary"]["plan_digest"]
+    # and the three are this run's real artifacts rather than three empty files
     # that happen to carry the contracted names
     assert _load_json(target / "summary.json") == FIXTURE["primary"]["summary"]
     assert _digest(_load_json(target / "shard_index.json")) == (
@@ -1373,16 +1426,21 @@ def test_the_shard_floor_and_the_plan_level_are_read_from_the_policy():
 
 
 def test_the_shard_floor_holds_where_one_value_dominates_the_base():
-    """The floor's hard case: a first value that meets every later target at once.
+    """The floor's hard case, and 1.9 states how it resolves.
 
     Six keys, the first carrying a hundred bytes against one byte each for the
-    rest, split four ways under a floor of two. Shard one closes on the first
-    key alone and falls below the floor, so its key carries forward -- and every
-    later target is already met by those hundred bytes. A window that measures
-    what it has taken from the last CLOSED boundary then takes no further key at
-    all and folds the whole base into a single shard, which is a shard split in
-    name only. Each shard closes at a key, so shard two reaches the second key,
-    the carried window makes the floor and closes, and the base is really split.
+    rest, split four ways under a floor of two. Shard one closes on the first key
+    alone and falls below the floor, so its key carries forward -- and every later
+    target is already met by those hundred bytes.
+
+    v1.9's index section settles what happens next: "Every shard takes at least
+    one key the shards before it did not, and the window it is measured over runs
+    from where its own scan began rather than from the boundary the last CLOSED
+    shard set", and the contract's min_shard_keys note says the same of the window
+    the floor is counted against. So shard two reaches the second key, the carried
+    window makes the floor and closes, and the base is really split. A run that
+    measured the window from the last closed boundary takes no further key at all
+    and folds the base into one shard, which those two sentences rule out.
     """
     original_policy = POLICY_PATH.read_text(encoding="utf-8")
     rows = [{"key": f"kk-{i:04d}", "value_bytes": 100 if i == 0 else 1,
