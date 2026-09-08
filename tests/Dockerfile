@@ -4,8 +4,8 @@ FROM public.ecr.aws/docker/library/python:3.13-slim-bookworm@sha256:01f42367a0a9
 # stdlib only (json/hashlib/ast/subprocess/fractions) plus pytest.
 # The verifier image's only network step; an unguarded index fetch here fails the
 # build exactly as a failed apt fetch does. Retries are pip's own rather than a
-# shell loop around it, so every word after `pip install` is either a flag or a
-# package at an exact version.
+# shell loop wrapped around it: the loop put shell words on the same command as
+# the install, where a scan for unpinned dependencies read them as package names.
 RUN pip install --no-cache-dir --retries=5 --timeout=60 \
         pytest==8.4.1 \
         pytest-json-ctrf==0.3.5
