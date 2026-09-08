@@ -3,20 +3,12 @@ FROM public.ecr.aws/docker/library/python:3.13-slim-bookworm@sha256:01f42367a0a9
 # Verifier dependencies, baked in (no network at trial time). Grading uses the
 # stdlib only (json/hashlib/ast/subprocess/fractions) plus pytest.
 # The verifier image's only network step; an unguarded index fetch here fails the
-# build exactly as a failed apt fetch does.
-RUN set -eu; \
-    delay=5; \
-    for attempt in 1 2 3 4; do \
-        if pip install --no-cache-dir --timeout 30 --retries 3 \
-                pytest==8.4.1 \
-                pytest-json-ctrf==0.3.5; then \
-            exit 0; \
-        fi; \
-        echo "pip attempt ${attempt} failed, retrying in ${delay}s" >&2; \
-        sleep "${delay}"; \
-        delay=$((delay * 2)); \
-    done; \
-    exit 1
+# build exactly as a failed apt fetch does. Retries are pip's own rather than a
+# shell loop around it, so every word after `pip install` is either a flag or a
+# package at an exact version.
+RUN pip install --no-cache-dir --retries=5 --timeout=60 \
+        pytest==8.4.1 \
+        pytest-json-ctrf==0.3.5
 
 # Landing directory for the declared artifact (/app) collected from the agent's
 # environment. Its parent must exist in the verifier image before the copy.
