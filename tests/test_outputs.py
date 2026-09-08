@@ -495,6 +495,13 @@ def test_the_reconciled_artifacts_are_serialised_as_the_contract_states():
 
     rows = _load_jsonl(BASE_PATH)
     written = BASE_PATH.read_text(encoding="utf-8")
+    # the contract says the file is ASCII throughout, with anything above it
+    # escaped; seg-0095 puts keys in the base that make that visible
+    assert any(not row["key"].isascii() for row in rows), (
+        "no key above ASCII reached the base, so the escaping rule is untested")
+    assert written.isascii(), (
+        "the compacted base carries characters above ASCII rather than the "
+        "escapes the contract names")
     expected = "".join(
         json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in rows)
     if written != expected:
@@ -1078,13 +1085,6 @@ def test_output_dir_holds_exactly_the_three_contracted_files():
         FIXTURE["primary"]["shard_digest"]
     assert _digest(_load_jsonl(target / "compaction_plan.jsonl")) == \
         FIXTURE["primary"]["plan_digest"]
-    # and the three are this run's real artifacts rather than three empty files
-    # that happen to carry the contracted names
-    assert _load_json(target / "summary.json") == FIXTURE["primary"]["summary"]
-    assert _digest(_load_json(target / "shard_index.json")) == (
-        FIXTURE["primary"]["shard_digest"])
-    assert _digest(_load_jsonl(target / "compaction_plan.jsonl")) == (
-        FIXTURE["primary"]["plan_digest"])
 
 
 def test_artifacts_use_the_serialisation_the_contract_states():
@@ -1102,6 +1102,9 @@ def test_artifacts_use_the_serialisation_the_contract_states():
         assert raw.endswith("\n"), f"{name} has no trailing newline"
         assert raw == json.dumps(json.loads(raw), indent=2, sort_keys=True) + "\n", (
             f"{name} is not two-space-indented JSON with sorted keys")
+        assert raw.isascii(), (
+            f"{name} carries characters above ASCII; the contract says they are "
+            f"escaped so the file is ASCII throughout")
 
     raw = (target / "compaction_plan.jsonl").read_text(encoding="utf-8")
     assert raw.endswith("\n"), "compaction_plan.jsonl has no trailing newline"
@@ -1110,11 +1113,19 @@ def test_artifacts_use_the_serialisation_the_contract_states():
     for number, line in enumerate(lines, start=1):
         assert json.dumps(json.loads(line), separators=(",", ":"), sort_keys=True) == line, (
             f"plan line {number} is not the compact, key-sorted serialisation of its content")
+    assert raw.isascii(), (
+        "compaction_plan.jsonl carries characters above ASCII; the contract "
+        "says they are escaped so the file is ASCII throughout")
 
 
+# eval and exec are deliberately absent. They are ways of running code, not
+# ways of naming a module, and instruction.md bans a module name assembled at
+# run time rather than run-time evaluation as such; a correct submission that
+# used eval() on an arithmetic string was being failed for it. What a run
+# actually loads is settled by the census below, whatever it was spelled with.
 _DYNAMIC_LOADERS = {"__import__", "import_module", "load_module", "exec_module",
                     "find_module", "module_from_spec", "spec_from_file_location",
-                    "SourceFileLoader", "ExtensionFileLoader", "eval", "exec"}
+                    "SourceFileLoader", "ExtensionFileLoader"}
 
 
 def _imported_roots(source: str) -> set:
@@ -1164,35 +1175,136 @@ def _dynamic_loads_with_a_computed_name(source: str) -> list:
     return out
 
 
-def test_rebuild_imports_only_the_standard_library():
-    """instruction.md says standard library only, and nothing was checking it.
+_CENSUS_WRAPPER = """import json
+import runpy
+import sys
 
-    Relying on the verifier image simply not carrying third-party packages is not
-    the same as enforcing the rule: it makes the constraint an accident of the
-    image rather than something the task states and grades. Modules the
-    submission ships beside the rebuild are its own code, not a dependency.
+target, census = sys.argv[1], sys.argv[2]
+sys.argv = [target] + sys.argv[3:]
+status = 0
+try:
+    runpy.run_path(target, run_name="__main__")
+except SystemExit as exc:
+    status = exc.code if isinstance(exc.code, int) else 0
+finally:
+    with open(census, "w", encoding="utf-8") as handle:
+        json.dump({name: getattr(module, "__file__", None)
+                   for name, module in sorted(sys.modules.items())}, handle)
+sys.exit(status)
+"""
+
+
+def _module_census(script_path: Path, args: list, tag: str) -> dict:
+    """Run a script through a wrapper that writes down what it loaded.
+
+    A source scan can only see the modules it can find and name. This runs the
+    program for real, under the same unprivileged uid as every other run here,
+    and reads sys.modules afterwards, so the answer covers whatever the run
+    actually brought in and wherever the file came from.
     """
-    # Every module the submission ships under /app/workflow, not just the entry
-    # point: reading rebuild_index.py alone let a helper beside it import a
-    # third-party package unnoticed.
-    sources = sorted(WORKFLOW_PATH.parent.rglob("*.py"))
-    assert WORKFLOW_PATH in sources, "the rebuild is not where the contract puts it"
-    local = {path.stem for path in sources}
-    local |= {path.name for path in WORKFLOW_PATH.parent.iterdir() if path.is_dir()}
-    for source in sources:
-        found = _imported_roots(source.read_text(encoding="utf-8"))
+    _publish_inputs()
+    WORK_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(WORK_DIR, 0o1777)
+    wrapper = WORK_DIR / "census_wrapper.py"
+    wrapper.write_text(_CENSUS_WRAPPER, encoding="utf-8")
+    os.chmod(wrapper, 0o644)
+    census = WORK_DIR / f"census_{tag}.json"
+    if census.exists():
+        census.unlink()
+    completed = _run_candidate(
+        _SETPRIV + [sys.executable, str(wrapper), str(script_path), str(census)]
+        + [str(arg) for arg in args],
+        WORK_DIR)
+    assert completed.returncode == 0, (
+        f"the {tag} run exited {completed.returncode}\n"
+        f"stdout: {completed.stdout[-2000:]}\nstderr: {completed.stderr[-2000:]}")
+    assert census.is_file(), f"the {tag} run left no module census behind"
+    return json.loads(census.read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def loaded_modules():
+    """Modules the rebuild brings in, over and above the bare interpreter.
+
+    The baseline is a census of an empty script through the same wrapper, so
+    anything the interpreter loads for itself -- site hooks and the like --
+    drops out and what is left is the submission's own doing.
+    """
+    baseline_script = WORK_DIR / "census_noop.py"
+    WORK_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(WORK_DIR, 0o1777)
+    baseline_script.write_text("pass\n", encoding="utf-8")
+    os.chmod(baseline_script, 0o644)
+    baseline = _module_census(baseline_script, [], "baseline")
+    live = _module_census(
+        WORKFLOW_PATH, ["--output-dir", str(WORK_DIR / "census-out")], "rebuild")
+    return {name: path for name, path in live.items() if name not in baseline}
+
+
+def _under_app(path) -> bool:
+    """True for a file the submission ships anywhere under /app."""
+    if not path:
+        return False
+    resolved = os.path.realpath(str(path))
+    return resolved == str(APP) or resolved.startswith(str(APP) + os.sep)
+
+
+def test_the_rebuild_loads_only_the_standard_library(loaded_modules):
+    """instruction.md says standard library only, judged by what a run loads.
+
+    This used to be a scan of every .py under /app/workflow, which got the rule
+    wrong in both directions: it failed a submission that kept its own helper in
+    /app/lib and imported it, and it failed a leftover reconciliation script the
+    instruction says is the agent's to keep, while a package reached through a
+    name built at run time was invisible to it. The run itself answers the
+    question: every module still in sys.modules afterwards is either standard
+    library or a file the submission ships under /app.
+    """
+    # reported by top-level package with one file as evidence: a single stray
+    # dependency drags a hundred submodules in with it, and a failure report
+    # that lists all of them is unreadable
+    outside = {}
+    for name, path in sorted(loaded_modules.items()):
+        root = name.split(".")[0]
+        if root in sys.stdlib_module_names or _under_app(path):
+            continue
+        outside.setdefault(root, path or "no file")
+    assert not outside, (
+        "the rebuild loaded modules that are neither standard library nor its "
+        f"own code under /app: "
+        + ", ".join(f"{root} ({path})" for root, path in outside.items()))
+    # and the census is watching a real run rather than coming back empty: a
+    # rebuild that reads JSON and takes command-line options cannot load
+    # nothing at all beyond what an empty script loads
+    assert loaded_modules, "the module census came back empty"
+
+
+def test_the_modules_the_run_loads_name_their_imports_outright(loaded_modules):
+    """The submission's own sources, wherever they live, are read as well.
+
+    The entry point plus every file under /app that the run pulled in: each is
+    parsed, and a name handed to an import at run time rather than written down
+    is refused, because the rule is standard library only and a name assembled
+    while the program runs is a way of not saying which library.
+    """
+    own = {WORKFLOW_PATH}
+    local = {WORKFLOW_PATH.stem}
+    for name, path in loaded_modules.items():
+        if _under_app(path):
+            own.add(Path(os.path.realpath(str(path))))
+            local.add(name.split(".")[0])
+    assert WORKFLOW_PATH.is_file(), "the rebuild is not where the contract puts it"
+
+    for source_path in sorted(own):
+        source = source_path.read_text(encoding="utf-8")
+        found = _imported_roots(source)
         outside = {name for name in found
                    if name not in sys.stdlib_module_names and name not in local}
         assert not outside, (
-            f"{source.name} imports outside the standard library: {sorted(outside)}")
-        # A dynamic load whose module name is computed cannot be resolved here
-        # at all, so it is refused outright rather than waved through: the rule
-        # is standard library only, and a name assembled at run time is a way of
-        # not saying which library.
-        computed = _dynamic_loads_with_a_computed_name(
-            source.read_text(encoding="utf-8"))
+            f"{source_path} imports outside the standard library: {sorted(outside)}")
+        computed = _dynamic_loads_with_a_computed_name(source)
         assert not computed, (
-            f"{source.name} loads a module through a computed name, which no "
+            f"{source_path} loads a module through a computed name, which no "
             f"import check can follow: {computed}")
 
 
@@ -1709,6 +1821,47 @@ def test_an_inadmissible_key_is_dropped_and_its_segment_still_admitted():
         assert key not in keys, f"the inadmissible key {key!r} reached the base"
     for key in admissible:
         assert key in keys, f"the admissible key {key!r} was dropped with the rest"
+
+
+def test_the_checksum_stream_is_the_ascii_escaped_serialisation():
+    """v1.3 pins how a non-ASCII character enters the checksum stream.
+
+    "Compact JSON with its object keys sorted" left two readings of the same
+    record open once seg-0095 brought a key above ASCII into the corpus: the
+    character written out as itself, or written as a \\uXXXX escape. They give
+    different digests, so the two readings disagree about whether seg-0095 is
+    admitted at all, and the base, the manifest, the shards and the plan all
+    move with that answer. v1.3 now says the stream is ASCII and escapes; this
+    holds the shipped segment to it and checks the other reading really would
+    have come out elsewhere.
+    """
+    lines = (PENDING_DIR / "seg-0095.jsonl").read_text(
+        encoding="utf-8").split("\n")[:-1]
+    body = [json.loads(line) for line in lines]
+    trailer = body.pop()
+    assert trailer.get("trailer"), "seg-0095 has no trailer"
+    assert any(not record["k"].isascii() for record in body), (
+        "seg-0095 carries no key above ASCII, so the two readings cannot differ")
+
+    def stream_digest(escaped: bool) -> str:
+        running = hashlib.sha256()
+        for record in body:
+            running.update((json.dumps(
+                record, separators=(",", ":"), sort_keys=True,
+                ensure_ascii=escaped) + "\n").encode("utf-8"))
+        return running.hexdigest()[:32]
+
+    assert stream_digest(True) != stream_digest(False), (
+        "both readings of the serialisation give the same digest here, so this "
+        "segment no longer separates them")
+    assert trailer["checksum"] == stream_digest(True), (
+        "seg-0095's trailer does not match the escaped stream v1.3 describes")
+
+    repaired = _load_json(REPAIRED_PATH)
+    assert "seg-0095" in {e["id"] for e in repaired["levels"]["0"]}, (
+        "seg-0095 was discarded, which is what reading the checksum stream with "
+        "the character written out as itself produces")
+    assert "seg-0095" not in repaired["discarded_segments"]
 
 
 def test_the_base_follows_byte_order_where_the_two_collations_disagree():

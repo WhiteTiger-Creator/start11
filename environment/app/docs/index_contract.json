@@ -29,7 +29,7 @@
       },
       "key_set": "exactly these keys and no others",
       "path": "/app/output/compaction_plan.jsonl",
-      "serialisation": "one compact JSON object per line, object keys sorted, trailing newline",
+      "serialisation": "one compact JSON object per line, object keys sorted, trailing newline, every character outside printable ASCII escaped as \\uXXXX in lower-case hex so the file is ASCII throughout",
       "sort": "ascending by segment id"
     },
     "shard_index": {
@@ -52,7 +52,7 @@
       },
       "key_set": "exactly these keys and no others",
       "path": "/app/output/shard_index.json",
-      "serialisation": "JSON array, two-space indent, object keys sorted, trailing newline",
+      "serialisation": "JSON array, two-space indent, object keys sorted, trailing newline, every character outside printable ASCII escaped as \\uXXXX in lower-case hex so the file is ASCII throughout",
       "sort": "ascending by shard, which is numbered from zero and contiguous"
     },
     "summary": {
@@ -140,7 +140,7 @@
       },
       "key_set": "exactly these keys and no others",
       "path": "/app/data/compacted_base.jsonl",
-      "serialisation": "one compact JSON object per line, object keys sorted, trailing newline",
+      "serialisation": "one compact JSON object per line, object keys sorted, trailing newline, every character outside printable ASCII escaped as \\uXXXX in lower-case hex so the file is ASCII throughout",
       "sort": "ascending by key under the collation the deployed release defines"
     },
     "manifest_repaired": {
@@ -163,7 +163,7 @@
         "levels",
         "shard_count"
       ],
-      "serialisation": "JSON object, two-space indent, object keys sorted, trailing newline",
+      "serialisation": "JSON object, two-space indent, object keys sorted, trailing newline, every character outside printable ASCII escaped as \\uXXXX in lower-case hex so the file is ASCII throughout",
       "sort": "each level list ascending by segment id; discarded_segments ascending"
     }
   },
