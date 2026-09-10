@@ -882,7 +882,9 @@ def test_shards_balance_stored_bytes_not_key_counts(primary_outputs):
     """
     _, _, shards, _ = primary_outputs
     rows = _load_jsonl(BASE_PATH)
-    shard_count = int(_load_json(POLICY_PATH)["shard_count"])
+    policy = _load_json(POLICY_PATH)
+    shard_count = int(policy["shard_count"])
+    floor = max(1, int(policy["min_shard_keys"]))
     total = sum(int(row["value_bytes"]) for row in rows)
 
     expected = []
@@ -894,10 +896,20 @@ def test_shards_balance_stored_bytes_not_key_counts(primary_outputs):
         if shard == shard_count:
             index = len(rows)
         else:
-            while index < len(rows) and running < target:
+            # v1.9: "A shard closes AT a key. Every shard takes at least one key
+            # the shards before it did not... One value large enough to carry the
+            # running total past several targets at once does not close those
+            # shards on nothing: each still takes a key of its own." Stopping at
+            # `running < target` alone dropped those shards, so this recomputation
+            # disagreed with the release on any base holding a dominating value --
+            # not on the graded one, where no value spans two targets, but the
+            # rebuild is required to be correct on any conforming base and the
+            # check it is measured against has to say the same thing.
+            opened = index
+            while index < len(rows) and (running < target or index == opened):
                 running += int(rows[index]["value_bytes"])
                 index += 1
-        if index <= start:
+        if index - start < floor:
             continue
         window = rows[start:index]
         expected.append(
@@ -923,6 +935,46 @@ def test_shards_balance_stored_bytes_not_key_counts(primary_outputs):
         "on this base a key-count split coincides with the byte split, so the "
         "comparison above cannot tell the two apart"
     )
+
+
+def test_one_value_past_several_targets_still_leaves_each_shard_a_key():
+    """v1.9's other half of "a shard closes AT a key", at a floor of one.
+
+    The graded base carries no value large enough to span two targets, so the
+    rule that each shard still takes a key of its own was documented and never
+    reached. Three keys of a hundred bytes, one byte and one byte, split three
+    ways: the first value alone passes every target, and a scan that only asks
+    whether the running total has reached the target closes shard one on that key
+    and then takes nothing for shard two, leaving two shards where the release
+    names three. The floor stays at one so this is the closing rule on its own,
+    not the folding rule the dominating-value probe covers.
+    """
+    original_policy = POLICY_PATH.read_text(encoding="utf-8")
+    rows = [{"key": f"kk-{i:04d}", "value_bytes": 100 if i == 0 else 1,
+             "version_count": 1, "level": 0, "segment": "seg-0000", "seq": 1 + i}
+            for i in range(3)]
+    staged = WORK_DIR / "spanning_base.jsonl"
+    staged.write_text("".join(
+        json.dumps(row, separators=(",", ":"), sort_keys=True) + "\n" for row in rows),
+        encoding="utf-8")
+    os.chmod(staged, 0o644)
+    try:
+        policy = json.loads(original_policy)
+        policy["shard_count"] = 3
+        policy["min_shard_keys"] = 1
+        POLICY_PATH.write_text(
+            json.dumps(policy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        _, summary, shards, _ = _run_pipeline(
+            input_path=staged, output_dir=WORK_DIR / "spanning")
+    finally:
+        POLICY_PATH.write_text(original_policy, encoding="utf-8")
+
+    assert [row["key_count"] for row in shards] == [1, 1, 1], (
+        "one value carried the total past every target and the shards after it "
+        "closed on nothing, though v1.9 gives each a key of its own")
+    assert [row["first_key"] for row in shards] == [r["key"] for r in rows]
+    assert [row["value_bytes"] for row in shards] == [100, 1, 1]
+    assert summary["shard_count"] == 3
 
 
 def test_summary_agrees_with_its_own_artifacts(primary_outputs):
@@ -1175,6 +1227,8 @@ def _dynamic_loads_with_a_computed_name(source: str) -> list:
     return out
 
 
+_STAGE_DIR: Path | None = None
+
 _CENSUS_WRAPPER = """import json
 import runpy
 import sys
@@ -1194,6 +1248,25 @@ sys.exit(status)
 """
 
 
+def _verifier_stage() -> Path:
+    """A root-owned directory the candidate can read but never write into.
+
+    The census wrapper used to be written into /candidate-work, which is 1777 and
+    is the working directory of every earlier candidate run. That put the
+    wrapper's own sys.path[0] inside a tree the submission had already had the run
+    of: a run that left a json.py or a runpy.py there would have shadowed the
+    wrapper's imports on the next census and could have written the census file
+    itself. The wrapper now sits here at 0755 root-owned, and it is run with -I so
+    the interpreter puts neither the script's directory nor any environment path
+    on sys.path at all.
+    """
+    global _STAGE_DIR
+    if _STAGE_DIR is None:
+        _STAGE_DIR = Path(tempfile.mkdtemp(prefix="verifier_stage_"))
+        os.chmod(_STAGE_DIR, 0o755)
+    return _STAGE_DIR
+
+
 def _module_census(script_path: Path, args: list, tag: str) -> dict:
     """Run a script through a wrapper that writes down what it loaded.
 
@@ -1205,14 +1278,14 @@ def _module_census(script_path: Path, args: list, tag: str) -> dict:
     _publish_inputs()
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(WORK_DIR, 0o1777)
-    wrapper = WORK_DIR / "census_wrapper.py"
+    wrapper = _verifier_stage() / "census_wrapper.py"
     wrapper.write_text(_CENSUS_WRAPPER, encoding="utf-8")
     os.chmod(wrapper, 0o644)
     census = WORK_DIR / f"census_{tag}.json"
     if census.exists():
         census.unlink()
     completed = _run_candidate(
-        _SETPRIV + [sys.executable, str(wrapper), str(script_path), str(census)]
+        _SETPRIV + [sys.executable, "-I", str(wrapper), str(script_path), str(census)]
         + [str(arg) for arg in args],
         WORK_DIR)
     assert completed.returncode == 0, (
@@ -1230,7 +1303,7 @@ def loaded_modules():
     anything the interpreter loads for itself -- site hooks and the like --
     drops out and what is left is the submission's own doing.
     """
-    baseline_script = WORK_DIR / "census_noop.py"
+    baseline_script = _verifier_stage() / "census_noop.py"
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(WORK_DIR, 0o1777)
     baseline_script.write_text("pass\n", encoding="utf-8")
