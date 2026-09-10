@@ -5,7 +5,7 @@
       "/app/data/index_policy.json"
     ],
     "input": "--input selects the compacted base only; default /app/data/compacted_base.jsonl",
-    "output_dir": "--output-dir selects the output directory; default /app/output"
+    "output_dir": "--output-dir selects the directory the run writes into; default /app/output. The paths recorded for the three outputs below are where they land under that default: given the flag, the same three file names are written into the directory it names and nowhere else"
   },
   "contract_version": "segment-index-v1",
   "description": "Output contract for the shard index rebuild. Shapes, paths, ordering and coercions only; it does not say how any value is derived.",

@@ -10,6 +10,7 @@ import os
 import signal
 import subprocess
 import sys
+import itertools
 import tempfile
 import time
 from pathlib import Path
@@ -701,6 +702,31 @@ def _keys_inside(entry: dict, count: int, taken: set) -> list[str]:
     return minted
 
 
+_case_ctr = itertools.count(1)
+
+
+def _neutral_dir() -> Path:
+    """A staging directory root owns, whose name says nothing about the case.
+
+    Two things at once. The verifier used to stage inputs straight into
+    /candidate-work, which is mode 1777 and is the cwd of every graded run, so a
+    submission could plant a symlink at a name it had guessed and have root write
+    the held-out base through it. And the names themselves -- variant_<label>,
+    tie_<label> -- announced which hidden case was running, in argv, to the
+    program being graded: a planner could read the basename and apply only the
+    tie-break criterion it named instead of the chain the release states. Both
+    go away with a fresh root-owned directory and a serial number for a name.
+    """
+    made = Path(tempfile.mkdtemp(prefix="case_", dir=str(WORK_DIR)))
+    os.chmod(made, 0o755)
+    return made
+
+
+def _neutral_out() -> Path:
+    """An output directory whose name likewise carries no case identity."""
+    return _neutral_dir() / "out"
+
+
 def _variant_bases() -> dict[str, list]:
     """Plausible misreadings of the release notes, as perturbed bases.
 
@@ -765,7 +791,7 @@ def test_wrong_reconciliations_change_the_index(primary_outputs):
     """
     _, summary, shards, _plan = primary_outputs
     for label, rows in _variant_bases().items():
-        staged = WORK_DIR / f"variant_{label}.jsonl"
+        staged = _neutral_dir() / "base.jsonl"
         staged.write_text(
             "".join(
                 json.dumps(row, separators=(",", ":"), sort_keys=True) + "\n" for row in rows
@@ -775,7 +801,7 @@ def test_wrong_reconciliations_change_the_index(primary_outputs):
         os.chmod(staged, 0o644)
         try:
             _, other_summary, other_shards, _ = _run_pipeline(
-                input_path=staged, output_dir=WORK_DIR / f"out_{label}"
+                input_path=staged, output_dir=_neutral_out()
             )
         except AssertionError:
             # refusing a base that contradicts the manifest is a defensible
@@ -953,7 +979,7 @@ def test_one_value_past_several_targets_still_leaves_each_shard_a_key():
     rows = [{"key": f"kk-{i:04d}", "value_bytes": 100 if i == 0 else 1,
              "version_count": 1, "level": 0, "segment": "seg-0000", "seq": 1 + i}
             for i in range(3)]
-    staged = WORK_DIR / "spanning_base.jsonl"
+    staged = _neutral_dir() / "base.jsonl"
     staged.write_text("".join(
         json.dumps(row, separators=(",", ":"), sort_keys=True) + "\n" for row in rows),
         encoding="utf-8")
@@ -965,7 +991,7 @@ def test_one_value_past_several_targets_still_leaves_each_shard_a_key():
         POLICY_PATH.write_text(
             json.dumps(policy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         _, summary, shards, _ = _run_pipeline(
-            input_path=staged, output_dir=WORK_DIR / "spanning")
+            input_path=staged, output_dir=_neutral_out())
     finally:
         POLICY_PATH.write_text(original_policy, encoding="utf-8")
 
@@ -1229,9 +1255,23 @@ def _dynamic_loads_with_a_computed_name(source: str) -> list:
 
 _STAGE_DIR: Path | None = None
 
+# The census is taken in the same interpreter that runs the submission, so
+# everything it needs afterwards is bound to a local name BEFORE that code gets
+# a turn: the dump function, the file opener, the real sys.modules mapping. A
+# submission that ends by rebinding json.dump, or by pointing sys.modules at a
+# dictionary of its own, is rewriting names this wrapper no longer consults.
+# It could still reach into the real mapping and delete an entry, which is why
+# the import scan that reads this census is not the only check on the rule.
 _CENSUS_WRAPPER = """import json
 import runpy
 import sys
+
+_dumps = json.dumps
+_open = open
+_sorted = sorted
+_getattr = getattr
+_modules = sys.modules
+_exit = sys.exit
 
 target, census = sys.argv[1], sys.argv[2]
 sys.argv = [target] + sys.argv[3:]
@@ -1241,10 +1281,11 @@ try:
 except SystemExit as exc:
     status = exc.code if isinstance(exc.code, int) else 0
 finally:
-    with open(census, "w", encoding="utf-8") as handle:
-        json.dump({name: getattr(module, "__file__", None)
-                   for name, module in sorted(sys.modules.items())}, handle)
-sys.exit(status)
+    _taken = {name: _getattr(module, "__file__", None)
+              for name, module in _sorted(_modules.items())}
+    with _open(census, "w", encoding="utf-8") as handle:
+        handle.write(_dumps(_taken))
+_exit(status)
 """
 
 
@@ -1411,11 +1452,11 @@ def test_rebuild_generalises_to_a_held_out_base():
     """A base the agent never saw must produce the sealed alternate outputs."""
     # /tests stays unreadable to the candidate uid, so the held-out base is
     # staged into the shared scratch area before the run.
-    staged = WORK_DIR / "alt_base.jsonl"
+    staged = _neutral_dir() / "base.jsonl"
     staged.write_bytes(ALT_INPUT.read_bytes())
     os.chmod(staged, 0o644)
     _, summary, shards, plan = _run_pipeline(
-        input_path=staged, output_dir=WORK_DIR / "alt"
+        input_path=staged, output_dir=_neutral_out()
     )
     assert summary == FIXTURE["alternate"]["summary"]
     assert _digest(shards) == FIXTURE["alternate"]["shard_digest"]
@@ -1538,13 +1579,24 @@ def test_the_plan_breaks_a_tie_the_way_the_release_states():
             POLICY_PATH.write_text(
                 json.dumps(policy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-            _, summary, _, plan = _run_pipeline(output_dir=WORK_DIR / f"tie_{label}")
+            _, summary, _, plan = _run_pipeline(output_dir=_neutral_out())
             chosen = [row["segment"] for row in plan]
             assert chosen == expected, (
                 f"{label}: the plan took {chosen}, not the {expected} that 1.9's "
                 f"ordering names among the equally-scoring selections")
             assert summary["plan_charged_mib"] <= mib
             assert summary["plan_charged_records"] <= records
+            # The budgets the run was held to, echoed from the policy it read.
+            # Only the byte budget was ever asserted against a value other than
+            # the shipped one, so a record budget written out as the literal
+            # 88000 went unnoticed on every run.
+            assert summary["plan_budget_mib"] == mib, (
+                f"{label}: the summary reports a byte budget of "
+                f"{summary['plan_budget_mib']}, not the {mib} the policy carries")
+            assert summary["plan_record_budget"] == records, (
+                f"{label}: the summary reports a record budget of "
+                f"{summary['plan_record_budget']}, not the {records} the policy "
+                f"carries")
     finally:
         POLICY_PATH.write_text(original_policy, encoding="utf-8")
         REPAIRED_PATH.write_text(original_manifest, encoding="utf-8")
@@ -1571,7 +1623,7 @@ def test_the_shard_floor_and_the_plan_level_are_read_from_the_policy():
         policy["min_shard_keys"] = 20_000
         POLICY_PATH.write_text(
             json.dumps(policy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        _, summary, shards, _ = _run_pipeline(output_dir=WORK_DIR / "floor")
+        _, summary, shards, _ = _run_pipeline(output_dir=_neutral_out())
         assert shards, "the run emitted no shards at all"
         assert len(shards) < policy["shard_count"], (
             "the floor bound on this base but the shard count did not fall, so "
@@ -1592,7 +1644,7 @@ def test_the_shard_floor_and_the_plan_level_are_read_from_the_policy():
         policy["plan_level"] = int(other)
         POLICY_PATH.write_text(
             json.dumps(policy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        _, summary, _, plan = _run_pipeline(output_dir=WORK_DIR / "level")
+        _, summary, _, plan = _run_pipeline(output_dir=_neutral_out())
         available = {s["id"] for s in manifest["levels"][other]}
         assert available, f"level {other} carries no segments to plan over"
         chosen = {row["segment"] for row in plan}
@@ -1631,7 +1683,7 @@ def test_the_shard_floor_holds_where_one_value_dominates_the_base():
     rows = [{"key": f"kk-{i:04d}", "value_bytes": 100 if i == 0 else 1,
              "version_count": 1, "level": 0, "segment": "seg-0000", "seq": 1 + i}
             for i in range(6)]
-    staged = WORK_DIR / "dominant_base.jsonl"
+    staged = _neutral_dir() / "base.jsonl"
     staged.write_text("".join(
         json.dumps(row, separators=(",", ":"), sort_keys=True) + "\n" for row in rows),
         encoding="utf-8")
@@ -1643,7 +1695,7 @@ def test_the_shard_floor_holds_where_one_value_dominates_the_base():
         POLICY_PATH.write_text(
             json.dumps(policy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         _, summary, shards, _ = _run_pipeline(
-            input_path=staged, output_dir=WORK_DIR / "dominant")
+            input_path=staged, output_dir=_neutral_out())
     finally:
         POLICY_PATH.write_text(original_policy, encoding="utf-8")
 
@@ -1658,6 +1710,18 @@ def test_the_shard_floor_holds_where_one_value_dominates_the_base():
     assert shards[0]["first_key"] == rows[0]["key"]
     assert shards[-1]["last_key"] == rows[-1]["key"]
     assert summary["shard_count"] == len(shards)
+    # The windows themselves, not merely their totals. Aggregates alone were
+    # satisfied by a run that folded a short window BACKWARDS into the shard
+    # already emitted -- it also lands two shards covering six keys and 105
+    # bytes -- while the contract carries a short window FORWARD into the next
+    # shard. The two dispositions differ only in where the keys end up, which is
+    # exactly what the totals cannot see.
+    assert [row["key_count"] for row in shards] == [2, 4], (
+        "the short window did not carry forward: carrying it gives shards of 2 "
+        f"and 4 keys, and this run gave {[row['key_count'] for row in shards]}")
+    assert [row["value_bytes"] for row in shards] == [101, 4]
+    assert [(row["first_key"], row["last_key"]) for row in shards] == [
+        ("kk-0000", "kk-0001"), ("kk-0002", "kk-0005")]
 
 
 def test_policy_path_actually_influences_the_output():

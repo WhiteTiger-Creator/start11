@@ -27,19 +27,55 @@ def read_segment(path: Path) -> tuple[list[dict], dict | None]:
     v1.7's all-or-nothing admission then discards the segment -- which is the
     right outcome for a file whose trailer is not where the format puts it.
     """
-    records = [json.loads(line)
-               for line in path.read_text(encoding="utf-8").splitlines()
-               if line.strip()]
-    if records and records[-1].get("trailer"):
+    lines = path.read_text(encoding="utf-8").splitlines()
+    # The trailer is the file's LAST line. Dropping blank lines before looking
+    # would have accepted a trailer with anything after it, and a file that goes
+    # on past its trailer is not one this format describes.
+    if lines and not lines[-1].strip():
+        return [json.loads(line) for line in lines if line.strip()], None
+    records = [json.loads(line) for line in lines if line.strip()]
+    if records and records[-1].get("trailer") is True:
         return records[:-1], records[-1]
     return records, None
+
+
+# v1.3 asks for ONE ESCAPE PER UTF-16 CODE UNIT for every character outside
+# printable ASCII, and json.dumps does not give that on its own: it writes the
+# five short forms (\b \f \n \r \t) for those control characters and leaves
+# DEL alone, so a body carrying one of them checksums differently from the
+# stream the release describes and its whole segment is then discarded under
+# v1.7 -- a key holding a control character is dropped by v1.4 at merge time,
+# not a reason to throw the records beside it away.
+_SHORT_ESCAPES = {"\\b": "\\u0008", "\\f": "\\u000c", "\\n": "\\u000a",
+                  "\\r": "\\u000d", "\\t": "\\u0009"}
+
+
+def canonical_line(record: dict) -> str:
+    """One body record as the checksum stream carries it."""
+    text = json.dumps(record, separators=(",", ":"), sort_keys=True)
+    out, index = [], 0
+    while index < len(text):
+        char = text[index]
+        if char == "\\" and index + 1 < len(text):
+            pair = text[index:index + 2]
+            if pair == "\\u":
+                out.append(text[index:index + 6])
+                index += 6
+                continue
+            out.append(_SHORT_ESCAPES.get(pair, pair))
+            index += 2
+            continue
+        # ensure_ascii leaves DEL as itself, though it is not printable ASCII
+        out.append("\\u007f" if char == "\x7f" else char)
+        index += 1
+    return "".join(out)
 
 
 def body_checksum(body: list[dict]) -> str:
     """The trailer checksum covers the serialised body lines, in order."""
     digest = hashlib.sha256()
     for record in body:
-        digest.update(json.dumps(record, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+        digest.update(canonical_line(record).encode("utf-8"))
         digest.update(b"\n")
     return digest.hexdigest()[:32]
 
@@ -56,9 +92,13 @@ def admit_pending(checkpoint_seq: int) -> tuple[list[dict], list[str]]:
     admitted, discarded = [], []
     for path in sorted(PENDING_DIR.glob("*.jsonl")):
         body, trailer = read_segment(path)
+        count = trailer.get("records") if trailer is not None else None
         intact = (
             trailer is not None
-            and trailer.get("records") == len(body)
+            # `records` is a count, and True is not one: Python would otherwise
+            # read `records: true` as 1 and admit a trailer the format rejects
+            and isinstance(count, int) and not isinstance(count, bool)
+            and count == len(body)
             and trailer.get("checksum") == body_checksum(body)
         )
         if not intact:
