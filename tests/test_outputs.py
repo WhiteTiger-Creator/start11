@@ -1558,10 +1558,21 @@ def test_the_import_check_reads_dynamic_loads_as_well_as_static_ones():
 
 
 def test_rebuild_is_idempotent():
-    """Two runs over the same base produce the same three artifacts."""
-    _, summary_a, shards_a, plan_a = _run_pipeline(output_dir=WORK_DIR / "idem_a")
-    _, summary_b, shards_b, plan_b = _run_pipeline(output_dir=WORK_DIR / "idem_b")
+    """Two runs over the same base produce the same three artifacts.
+
+    Byte for byte, which is what instruction.md asks for. The decoded
+    comparison below is insensitive to key order and to spacing, so a rebuild
+    that rendered summary.json with its fields in a different order on a later
+    run satisfied it while its artifacts differed as files.
+    """
+    dir_a, dir_b = WORK_DIR / "idem_a", WORK_DIR / "idem_b"
+    _, summary_a, shards_a, plan_a = _run_pipeline(output_dir=dir_a)
+    _, summary_b, shards_b, plan_b = _run_pipeline(output_dir=dir_b)
     assert (summary_a, shards_a, plan_a) == (summary_b, shards_b, plan_b)
+    for name in ("summary.json", "shard_index.json", "compaction_plan.jsonl"):
+        assert (dir_a / name).read_bytes() == (dir_b / name).read_bytes(), (
+            f"{name} came out with the same values but different bytes on a "
+            "second run over the same base")
 
 
 def test_rebuild_generalises_to_a_held_out_base():
