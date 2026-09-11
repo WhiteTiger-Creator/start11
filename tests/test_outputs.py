@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 import pytest
+import re
 
 APP = Path("/app")
 DATA = APP / "data"
@@ -2243,3 +2244,28 @@ def test_the_merge_breaks_a_seq_tie_on_the_greatest_segment_id():
     # both segments' own keys survive; only the contested one has a loser
     assert rows["only:seg-0200"]["segment"] == "seg-0200"
     assert rows["only:seg-0201"]["segment"] == "seg-0201"
+
+
+def test_the_program_declares_no_option_beyond_the_two_it_documents():
+    """instruction.md: it carries --input and --output-dir and declares no other option.
+
+    The fixed-path rule was graded only in the direction that an ordinary run
+    reads the fixed files, which an implementation offering its own override
+    passes without difficulty, since no run here ever supplies one. The
+    declared set is read off the program itself rather than guessed at: an
+    argument parser prints every option it declares when it is asked for help,
+    and that set has to be exactly the two the contract names.
+    """
+    _publish_inputs()
+    WORK_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(WORK_DIR, 0o1777)
+    usage = _run_candidate(_SETPRIV + [sys.executable, str(WORKFLOW_PATH), "-h"], WORK_DIR)
+    text = (usage.stdout or "") + (usage.stderr or "")
+    assert text.strip(), (
+        "the program printed no usage, so the options it declares cannot be "
+        "read off it")
+    declared = {name for name in re.findall(r"-{1,2}([A-Za-z][A-Za-z0-9_.-]*)", text)
+                if name not in {"h", "help"}}
+    assert declared == {'input', 'output-dir'}, (
+        f"the program declares {sorted(declared)}; the contract names "
+        "--input and --output-dir and no other option")

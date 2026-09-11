@@ -9,6 +9,12 @@
   },
   "contract_version": "segment-index-v1",
   "description": "Output contract for the shard index rebuild. Shapes, paths, ordering and coercions only; it does not say how any value is derived.",
+  "execution": {
+    "entry_point": "/app/workflow/rebuild_index.py",
+    "dependencies": "the standard library and nothing beyond it, with every module a run brings in named outright in that source rather than assembled while it runs",
+    "process": "a run does its work in the interpreter that was handed that file and passes no part of the job to another program or to a second interpreter, so every value in the artifacts is what that one file computed",
+    "runtime_budget_seconds_note": "a run finishes inside the budget this contract states"
+  },
   "numeric": {
     "charged_mib": "integer mebibytes",
     "rounding": "each stated figure is rounded exactly once, in the direction the deployed release gives",
