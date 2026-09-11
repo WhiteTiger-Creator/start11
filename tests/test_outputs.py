@@ -1273,6 +1273,27 @@ _getattr = getattr
 _modules = sys.modules
 _exit = sys.exit
 
+# What the census could not see before: a program launched outside this
+# interpreter. "Standard library only" is a statement about what does the work,
+# and work handed to /usr/bin/sort or to a second python is done by neither this
+# process nor its standard library, while leaving sys.modules looking spotless.
+# The audit hook is installed before the submission runs and records the launch
+# events by name; it cannot be uninstalled, and a hook that raises would be a
+# behaviour the run could catch, so it records rather than refuses.
+_launched = []
+
+
+def _watch(event, args):
+    if event in ("subprocess.Popen", "os.exec", "os.posix_spawn", "os.system",
+                 "os.spawn", "os.fork", "os.forkpty", "pty.spawn"):
+        try:
+            _launched.append([event, str(args[0])])
+        except Exception:
+            _launched.append([event, "?"])
+
+
+sys.addaudithook(_watch)
+
 target, census = sys.argv[1], sys.argv[2]
 sys.argv = [target] + sys.argv[3:]
 status = 0
@@ -1284,7 +1305,7 @@ finally:
     _taken = {name: _getattr(module, "__file__", None)
               for name, module in _sorted(_modules.items())}
     with _open(census, "w", encoding="utf-8") as handle:
-        handle.write(_dumps(_taken))
+        handle.write(_dumps({"modules": _taken, "launched": _launched}))
 _exit(status)
 """
 
@@ -1349,10 +1370,35 @@ def loaded_modules():
     os.chmod(WORK_DIR, 0o1777)
     baseline_script.write_text("pass\n", encoding="utf-8")
     os.chmod(baseline_script, 0o644)
-    baseline = _module_census(baseline_script, [], "baseline")
+    baseline = _module_census(baseline_script, [], "baseline")["modules"]
     live = _module_census(
         WORKFLOW_PATH, ["--output-dir", str(WORK_DIR / "census-out")], "rebuild")
-    return {name: path for name, path in live.items() if name not in baseline}
+    return {name: path for name, path in live["modules"].items()
+            if name not in baseline}
+
+
+@pytest.fixture(scope="module")
+def launched_programs():
+    """Programs the rebuild launched outside its own interpreter."""
+    live = _module_census(
+        WORKFLOW_PATH, ["--output-dir", str(WORK_DIR / "launch-out")], "launch")
+    return live["launched"]
+
+
+def test_the_rebuild_hands_the_work_to_no_other_program(launched_programs):
+    """The standard-library rule reaches past this interpreter's own imports.
+
+    The census reads sys.modules, and sys.modules says nothing about a second
+    process. A rebuild that shells out to /usr/bin/sort for the byte ordering,
+    or starts a second python to do the work, imports only `subprocess` here and
+    looks spotless -- while the ordering, or the whole rebuild, is done by
+    something that is neither this interpreter nor its standard library. The
+    wrapper's audit hook records every launch the run makes, so the work has to
+    stay where the instruction puts it.
+    """
+    assert launched_programs == [], (
+        "the rebuild launched another program rather than doing the work in "
+        f"the interpreter that ran it: {launched_programs}")
 
 
 def _under_app(path) -> bool:
@@ -1571,6 +1617,12 @@ def test_the_plan_breaks_a_tie_the_way_the_release_states():
         for label, (segments, mib, records, expected) in _TIES.items():
             staged = json.loads(original_manifest)
             staged["levels"]["0"] = _tie_world(segments)
+            # The discard list is perturbed here too. Every other graded run
+            # reads the shipped repaired manifest, where it has three entries,
+            # so a summary carrying a literal 3 was never told apart from one
+            # that counted what the manifest holds.
+            staged["discarded_segments"] = sorted(
+                staged["discarded_segments"] + [f"seg-t{len(segments):03d}"])
             REPAIRED_PATH.write_text(
                 json.dumps(staged, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             policy = json.loads(original_policy)
@@ -1590,6 +1642,12 @@ def test_the_plan_breaks_a_tie_the_way_the_release_states():
             # Only the byte budget was ever asserted against a value other than
             # the shipped one, so a record budget written out as the literal
             # 88000 went unnoticed on every run.
+            assert summary["discarded_segment_count"] == len(
+                staged["discarded_segments"]), (
+                f"{label}: the summary reports "
+                f"{summary['discarded_segment_count']} discarded segments, not "
+                f"the {len(staged['discarded_segments'])} the manifest carries")
+            assert summary["engine_version"] == staged["engine_version"]
             assert summary["plan_budget_mib"] == mib, (
                 f"{label}: the summary reports a byte budget of "
                 f"{summary['plan_budget_mib']}, not the {mib} the policy carries")
