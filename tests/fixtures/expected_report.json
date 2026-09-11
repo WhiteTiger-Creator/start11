@@ -55,5 +55,6 @@
     }
   },
   "release_notes_digest": "abd8daae6d8dc79af264cc5d3f5e5578f252d9e42a2ec4f3713e188c03e079fa",
-  "segment_tree_digest": "1c00f7714e09b63e8435dbdbdffbbcb11d7cbeb6c1c98085d3d82dcf34bbcf3a"
+  "segment_tree_digest": "eb7cd97369e0b964ecb3f053b51c730f3a858419cab20c6dc6c2fb885881624f",
+  "source_manifest_sha256": "3d2c33a56c51cedf138090b3417c2c869d4faf84cce292333f89e0190dce70fc"
 }

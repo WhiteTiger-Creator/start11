@@ -623,6 +623,64 @@ def test_admitted_segments_are_numbered_from_the_checkpoint():
         assert entry["level"] == 0
 
 
+def test_the_pre_repair_manifest_is_left_untouched():
+    """/app/data/manifest.json is a source document, not a working file.
+
+    The suite reads it to recompute where an admitted segment should have been
+    placed and numbered, which only means anything while it still records what
+    the tree held when the compaction stopped. Nothing said so: a submission
+    could write the two graded files correctly, add the admitted ids to this
+    file as well, and be failed by a numbering test whose expectation it had
+    just rewritten. The instruction now names it among the evidence that comes
+    back byte for byte, and this is where that is checked.
+    """
+    live = hashlib.sha256(MANIFEST_PATH.read_bytes()).hexdigest()
+    assert live == FIXTURE["source_manifest_sha256"], (
+        "/app/data/manifest.json was rewritten; it is the record of what was "
+        "linked before the interruption and the repair is graded against it")
+
+
+def test_a_segment_whose_checksum_agrees_but_whose_count_does_not_is_discarded():
+    """The third of v1.7's conditions, which nothing used to reach on its own.
+
+    seg-0093 pins the checksum condition and seg-0094 the missing trailer, but
+    the record count had no segment of its own: seg-0089 failed its count and
+    its checksum together, so an engine that recomputed the checksum and never
+    compared the trailer's count to the body on disk was graded identical to
+    one that did both. Its trailer now carries the checksum its body really
+    has, and the count it claims is the only thing left wrong with it.
+    """
+    raw = (PENDING_DIR / "seg-0089.jsonl").read_text(encoding="utf-8")
+    assert raw.endswith("\n"), "seg-0089 has no trailing newline"
+    body, trailer = [], None
+    for number, line in enumerate(raw.split("\n")[:-1], start=1):
+        assert line.strip(), f"seg-0089 line {number} is blank"
+        record = json.loads(line)
+        if record.get("trailer"):
+            trailer = record
+        else:
+            body.append(record)
+    assert trailer is not None, "seg-0089 lost its trailer"
+    running = hashlib.sha256()
+    for record in body:
+        running.update(
+            json.dumps(record, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+        running.update(b"\n")
+    assert running.hexdigest()[:32] == trailer["checksum"], (
+        "seg-0089's checksum no longer agrees, so it no longer tests the count")
+    assert trailer["records"] != len(body), (
+        "seg-0089's count agrees, so nothing makes the count condition decisive")
+
+    repaired = _load_json(REPAIRED_PATH)
+    assert "seg-0089" in repaired["discarded_segments"]
+    assert "seg-0089" not in {entry["id"] for entry in repaired["levels"]["0"]}
+    # Not "none of its keys reached the base": the linked tree holds keys this
+    # segment holds too, and those rows belong there. What must not appear is a
+    # row the base attributes to the discarded segment.
+    assert not [row for row in _load_jsonl(BASE_PATH) if row["segment"] == "seg-0089"], (
+        "the base carries rows attributed to the miscounted segment")
+
+
 def test_source_segments_are_left_untouched():
     """Reconciliation reads the segment files; it never rewrites them."""
     live = {
@@ -1263,6 +1321,7 @@ _STAGE_DIR: Path | None = None
 # It could still reach into the real mapping and delete an entry, which is why
 # the import scan that reads this census is not the only check on the rule.
 _CENSUS_WRAPPER = """import json
+import os.path
 import runpy
 import sys
 
@@ -1296,6 +1355,17 @@ sys.addaudithook(_watch)
 
 target, census = sys.argv[1], sys.argv[2]
 sys.argv = [target] + sys.argv[3:]
+# An ordinary `python /app/workflow/rebuild_index.py` puts that script's own
+# directory first on sys.path, so a rebuild split across sibling modules under
+# /app/workflow imports cleanly. -I keeps this wrapper's directory off the path,
+# which is what it is here for, but it took the submission's directory off too:
+# the same `import ledger_common` that worked in every graded run raised
+# ModuleNotFoundError in the census alone, and nothing in the instruction asks
+# for one file. The directory goes back on, which is the import world the run
+# really has. It goes on AFTER this wrapper's own imports are done and after the
+# names it needs are bound above, so a module planted beside the submission can
+# shadow nothing this wrapper goes on to use.
+sys.path.insert(0, os.path.dirname(os.path.abspath(target)))
 status = 0
 try:
     runpy.run_path(target, run_name="__main__")
@@ -1800,6 +1870,65 @@ def test_policy_path_actually_influences_the_output():
         assert summary != FIXTURE["primary"]["summary"]
     finally:
         POLICY_PATH.write_text(original, encoding="utf-8")
+
+
+def test_the_recorded_release_is_read_rather_than_written_in():
+    """summary.engine_version is copied from the manifest, not a literal.
+
+    Every graded and staged run until now was made against a manifest recording
+    1.9, the tie worlds included, so a summary that wrote the string "1.9" out
+    of its own source was indistinguishable from one that read the field. The
+    contract calls this field the release the manifest records; here the
+    manifest records a different one and the summary has to follow it.
+    """
+    original = REPAIRED_PATH.read_text(encoding="utf-8")
+    manifest = json.loads(original)
+    assert manifest["engine_version"] == "1.9", "the shipped manifest moved"
+    manifest["engine_version"] = "1.9.1"
+    try:
+        REPAIRED_PATH.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        _, summary, _, _ = _run_pipeline(output_dir=_neutral_out())
+        assert summary["engine_version"] == "1.9.1", (
+            "the summary reported "
+            f"{summary['engine_version']!r} against a manifest recording '1.9.1', "
+            "so the field is written in rather than read")
+    finally:
+        REPAIRED_PATH.write_text(original, encoding="utf-8")
+    assert _digest(_load_json(REPAIRED_PATH)) == FIXTURE["expected_manifest_digest"]
+
+
+def test_a_base_with_fewer_keys_than_shards_gets_one_shard_for_each():
+    """The contract's small-base disposition, which no run used to reach.
+
+    Every base staged here has carried far more keys than the ninety-six shards
+    the policy asks for, so the split never had to decide what to do when it
+    runs out of keys: an engine that emitted ninety-six shards with ninety-three
+    of them empty, or that fell over taking a maximum across an empty window,
+    passed everything. The contract says a base carrying fewer keys than the
+    count yields one shard per key and no empty shard, and the instruction asks
+    for an engine correct on any conforming base.
+    """
+    rows = _load_jsonl(BASE_PATH)
+    picked = [rows[0], rows[len(rows) // 2], rows[-1]]
+    keys = [row["key"] for row in picked]
+    assert len(set(keys)) == 3, "the sample keys have to be distinct"
+    staged = _neutral_dir() / "base.jsonl"
+    staged.write_text(
+        "".join(json.dumps(row, separators=(",", ":"), sort_keys=True) + "\n"
+                for row in picked),
+        encoding="utf-8")
+    os.chmod(staged, 0o644)
+    _, summary, shards, _ = _run_pipeline(input_path=staged, output_dir=_neutral_out())
+    requested = json.loads(POLICY_PATH.read_text(encoding="utf-8"))["shard_count"]
+    assert requested > len(picked), "the policy no longer asks for more shards than keys"
+    assert len(shards) == len(picked), (
+        f"{len(picked)} keys against {requested} shards produced {len(shards)} shards")
+    assert summary["shard_count"] == len(shards)
+    assert [shard["key_count"] for shard in shards] == [1, 1, 1]
+    assert [shard["first_key"] for shard in shards] == keys
+    assert [shard["last_key"] for shard in shards] == keys
+    assert all(shard["value_bytes"] > 0 for shard in shards), "an empty shard was emitted"
 
 
 def test_run_finishes_inside_the_contract_budget(primary_outputs):

@@ -928,4 +928,4 @@
 {"k":"acct:0025262","op":"put","seq":1509772,"vb":198}
 {"k":"cart:0004653","op":"put","seq":1509773,"vb":1522}
 {"k":"cart:0001797","op":"del","seq":1509774,"vb":0}
-{"checksum":"62ea2da55df6b559d5a4076fabdb8a64","records":1500,"trailer":true}
+{"checksum":"2b5e13ea897da34f2c549e60ddb0532a","records":1500,"trailer":true}

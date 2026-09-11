@@ -58,7 +58,8 @@
     "summary": {
       "container": "object",
       "field_notes": {
-        "candidate_count": "how many segments the repaired manifest offered the planner, counted before the budgets take any of them: every entry the manifest carries at the level the policy's plan_level names, admitted or already linked. It follows plan_level rather than standing at any fixed level",
+        "engine_version": "the release the repaired manifest records, copied from that field rather than restated here, so a run against a manifest recording another release reports the release it records",
+      "candidate_count": "how many segments the repaired manifest offered the planner, counted before the budgets take any of them: every entry the manifest carries at the level the policy's plan_level names, admitted or already linked. It follows plan_level rather than standing at any fixed level",
         "plan_budget_mib": "the byte budget the plan was held to, read from the policy",
         "plan_charged_mib": "the plan's charged size, the sum of its segments' charged mebibytes",
         "plan_charged_records": "the plan's charged records, the sum of its segments' charged thousands",
@@ -111,7 +112,8 @@
   "policy_fields": {
     "merge_budget_mib": "the plan's stored-byte budget, charged in whole mebibytes",
     "merge_record_budget": "the plan's record budget, charged in whole units of 1000 records",
-    "min_shard_keys": "the fewest keys a shard may carry: a window falling below it is not closed and its keys carry into the next shard instead, and keys left at the end that cannot make a shard of their own join the last shard emitted, so every key sits in exactly one shard whatever the floor is set to. The window is the keys the shard's OWN scan took, and 1.9 has every shard take at least one of them, so a floor of one never carries anything forward and a floor above one folds windows together until it is met",
+    "min_shard_keys": "the fewest keys a shard may carry: a window falling below it is not closed and its keys carry into the next shard instead, and keys left at the end that cannot make a shard of their own join the last shard emitted, so every key sits in exactly one shard whatever the floor is set to. The window is the keys the shard's OWN scan took, and 1.9 has every shard take at least one of them, so a floor of one never carries anything forward and a floor above one folds windows together until it is met. Coverage settles what the floor cannot: where the whole base carries fewer keys than the floor, those keys are the one shard there is to make, since no earlier shard exists for them to join and no key may be left out of the split",
+    "notes": "a plain-language reminder of what this file carries, addressed to whoever opens it. It is not an operational field: no output is derived from it and a rebuild that never reads it is correct",
     "plan_level": "the level the compaction plan selects from",
     "shard_count": "how many shards the base is split into, where there are keys enough to fill them: every shard takes at least one key no earlier shard took, so a base carrying fewer keys than this yields one shard per key and no empty shard is ever emitted, and where the floor leaves a window unclosable its keys join the last shard emitted rather than standing alone"
   },

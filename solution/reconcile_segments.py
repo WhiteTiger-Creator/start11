@@ -18,7 +18,7 @@ REPAIRED_PATH = DATA / "manifest_repaired.json"
 MAX_KEY_BYTES = 64  # v1.4
 
 
-def read_segment(path: Path) -> tuple[list[dict], dict | None]:
+def read_segment(path: Path, tolerate_torn: bool = False) -> tuple[list[dict], dict | None]:
     """Split a segment file into its body records and its trailer, if any.
 
     v1.3 puts the trailer on the LAST line of the file, so only the last line is
@@ -28,12 +28,37 @@ def read_segment(path: Path) -> tuple[list[dict], dict | None]:
     right outcome for a file whose trailer is not where the format puts it.
     """
     lines = path.read_text(encoding="utf-8").splitlines()
+    # With tolerate_torn, a line the decoder cannot read takes this segment out
+    # and nothing else -- the disposition v1.7 gives a pending segment.
+    # Parsing used to run ahead of the admission decision it feeds, so a body
+    # cut mid-record -- the torn flush v1.3 describes and v1.7 says to discard
+    # whole -- raised out of here and took the whole reconciliation with it,
+    # writing neither graded file.
+    def parsed(candidates):
+        out = []
+        for line in candidates:
+            if not line.strip():
+                continue
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                if not tolerate_torn:
+                    # a linked segment is committed data: a line that will not
+                    # decode there is a fault to report, not one to absorb by
+                    # quietly dropping the records around it
+                    raise
+                return None
+        return out
+
     # The trailer is the file's LAST line. Dropping blank lines before looking
     # would have accepted a trailer with anything after it, and a file that goes
     # on past its trailer is not one this format describes.
     if lines and not lines[-1].strip():
-        return [json.loads(line) for line in lines if line.strip()], None
-    records = [json.loads(line) for line in lines if line.strip()]
+        return parsed(lines) or [], None
+    records = parsed(lines)
+    if records is None:
+        # no trailer this caller can match, so admission fails all-or-nothing
+        return [], None
     if records and records[-1].get("trailer") is True:
         return records[:-1], records[-1]
     return records, None
@@ -41,8 +66,8 @@ def read_segment(path: Path) -> tuple[list[dict], dict | None]:
 
 # v1.3 asks for ONE ESCAPE PER UTF-16 CODE UNIT for every character outside
 # printable ASCII, and json.dumps does not give that on its own: it writes the
-# five short forms (\b \f \n \r \t) for those control characters and leaves
-# DEL alone, so a body carrying one of them checksums differently from the
+# five short forms (\b \f \n \r \t) for those control characters rather than
+# the six-character escapes, so a body carrying one of them checksums differently from the
 # stream the release describes and its whole segment is then discarded under
 # v1.7 -- a key holding a control character is dropped by v1.4 at merge time,
 # not a reason to throw the records beside it away.
@@ -65,7 +90,8 @@ def canonical_line(record: dict) -> str:
             out.append(_SHORT_ESCAPES.get(pair, pair))
             index += 2
             continue
-        # ensure_ascii leaves DEL as itself, though it is not printable ASCII
+        # ensure_ascii does escape DEL, so this is belt and braces: it covers a
+        # caller that hands this function a string json.dumps never touched.
         out.append("\\u007f" if char == "\x7f" else char)
         index += 1
     return "".join(out)
@@ -91,7 +117,7 @@ def admit_pending(checkpoint_seq: int) -> tuple[list[dict], list[str]]:
     """
     admitted, discarded = [], []
     for path in sorted(PENDING_DIR.glob("*.jsonl")):
-        body, trailer = read_segment(path)
+        body, trailer = read_segment(path, tolerate_torn=True)
         count = trailer.get("records") if trailer is not None else None
         intact = (
             trailer is not None
